@@ -1,6 +1,7 @@
 ## Milestone 
 - What objects will you use to abstract link layers, and what interface will it have?
     - Define an interface that implement the wrapper functions that would make the calls to the socket file descriptors. The "object" will store information such as the UDP socket and "physical" IP addresses/ports associated with it. 
+        - Each host is going to have a corresponding link comm object that abstracts away the link layer implementation details (e.g. working with the UDP socket)
     - We need an struct definition that represents the interface that packets are being sent and received from via the "physical" links, and it needs to know its own address, as well as the addresses of the links between nodes. For instance, in the example in the project handout, A's interface 0 needs to know about B's interface 0. 
 
 - What fields in the IP packet are read to determine when to forward a packet?
