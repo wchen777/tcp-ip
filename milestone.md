@@ -17,4 +17,4 @@
     - We are planning on using a map in golang to map the IP prefix address to the interface, which will represented some struct that stores information relative to that interface. We're still thinking about where to store the IP address local to the host itself -- whether that should be a separate field or also stored in the forwarding table. 
 
 - What happens on your node when the topology changes? In other words, when links go up down, how are forwarding and routing affected?
-    - When a link goes down, we will no longer receive the periodic update from neighboring node, thus will be able to remove that entry from the routing table. And when the node restarts, its neighboring nodes will receive updates and will able to update their tables accordingly. 
+    - When a link goes down, the neighboring nodes to that link will not receive a periodic update from the node connected by that link, thus will be able to remove that entry from the routing table. And when the node restarts, its neighboring nodes will receive updates and will able to update their tables accordingly. 
