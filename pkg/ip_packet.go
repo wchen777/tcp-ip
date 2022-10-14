@@ -5,6 +5,6 @@ import (
 )
 
 type IPPacket struct {
-	header ipv4.Header
-	data   []byte
+	Header ipv4.Header
+	Data   []byte
 }
