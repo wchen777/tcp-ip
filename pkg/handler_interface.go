@@ -1,7 +1,7 @@
 package pkg
 
-import "ip/pkg"
+//import "ip/pkg"
 
 type Handler interface {
-	ReceivePacket(pkg.IPPacket, []interface{}) error
+	ReceivePacket(IPPacket, interface{})
 }

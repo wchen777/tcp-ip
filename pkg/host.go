@@ -10,6 +10,8 @@ type Host struct {
 	// IPAddr        string
 	RoutingTable  *RoutingTable
 	PacketChannel chan IPPacket // when to initialize this?
+
+	HandlerRegistry map[int]Handler
 }
 
 const (
@@ -18,9 +20,11 @@ const (
 	TEST_PROTOCOL = 0
 )
 
-// TODO: figure out how to register handlers for the different protocols
+/*
+	populate the handler registry with the given handler
+*/
 func (h *Host) RegisterHandler(protocolNum int, handler Handler) {
-
+	h.HandlerRegistry[protocolNum] = handler
 }
 
 func (h *Host) ReadFromLinkLayer() {
@@ -33,6 +37,7 @@ func (h *Host) ReadFromLinkLayer() {
 			log.Print(packet.Header)
 			// TODO: need to call the appropriate handler
 			// TODO: verification checks for the ip packet
+
 			// IP version --> if the version is IPv6, the packet should be dropped
 			if packet.Header.Version == IPV6 {
 				continue
@@ -52,12 +57,20 @@ func (h *Host) ReadFromLinkLayer() {
 			}
 
 			// This field should only be checked in the event that the packet has reached its destination
-			if packet.header.Protocol == RIP_PROTOCOL {
-				// RIP packet
-			} else if packet.header.Protocol == TEST_PROTOCOL {
-				// test packet
-				test_handler
+			// call the appropriate handler function, otherwise packet is "dropped"
+			if handler, exists := h.HandlerRegistry[packet.Header.Protocol]; exists {
+				handler.ReceivePacket(packet, packet.Data)
 			}
+
+			//if err != nil {
+			//	return
+			//}
+			//if packet.header.Protocol == RIP_PROTOCOL {
+			//	// RIP packet
+			//} else if packet.header.Protocol == TEST_PROTOCOL {
+			//	// test packet
+			//	test_handler
+			//}
 		}
 	}
 }
