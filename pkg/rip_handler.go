@@ -8,7 +8,7 @@ import (
 )
 
 type RipHandler struct {
-	ProtocolNumber int
+	MessageChan chan []byte
 }
 
 const (
@@ -17,9 +17,18 @@ const (
 	INFINITY    = 16
 )
 
-func (r *RipHandler) ReceivePacket(packet IPPacket, table *RoutingTable) {
+func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	log.Print("Printing out packet data for RIP ...")
 	log.Print(packet.Data)
+
+	var table *RoutingTable
+
+	if val, ok := data.(*RoutingTable); ok {
+		table = val
+	} else {
+		log.Print("Unable to cast to routing table in RIP handler")
+		return
+	}
 
 	// deserialize the data to be a RIP command
 	packetDataBuf := bytes.NewReader(packet.Data)
@@ -36,7 +45,7 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, table *RoutingTable) {
 		if oldEntry == nil {
 			// if D isn't in the table, add <D, C, N>
 			updateChan := make(chan bool, 1)
-			table.AddRoute(newEntry.Address, newEntry.Cost, nextHop, updateChan)
+			table.AddRoute(newEntry.Address, newEntry.Cost+1, nextHop, updateChan)
 			// send new update to every neighbor except for the one we received message from
 			updatedEntries = append(updatedEntries, newEntry)
 			r.waitForUpdates(newEntry.Address, updateChan, table)
@@ -62,33 +71,68 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, table *RoutingTable) {
 	r.SendTriggeredUpdates(nextHop, updatedEntries, table)
 }
 
+func (r *RipHandler) GetAllEntries(table *RoutingTable) []RIPEntry {
+	table.TableLock.Lock()
+	defer table.TableLock.Unlock()
+	entries := make([]RIPEntry, 0)
+
+	for destination, entry := range table.Table {
+		ripEntry := RIPEntry{entry.Cost, destination, (1 << 32) - 1}
+		entries = append(entries, ripEntry)
+	}
+
+	return entries
+}
+
 // function that will periodically send updates to routing table
-func (r *RipHandler) SendUpdates() {
+func (r *RipHandler) SendUpdates(table *RoutingTable) {
 	timer := time.NewTicker(UPDATE_FREQ * time.Second)
 
 	for {
 
 		select {
 		case <-timer.C:
-			// send updates to all neighbors
-			// newRipMessage := RIPMessage{}
+			// send updates to all neighbors with entries from its routing table
+			entries := r.GetAllEntries(table)
+			numEntries := len(entries)
 
-			// send to network layer to handle this part
+			newRIPMessage := RIPMessage{}
+			newRIPMessage.Command = 1
+			newRIPMessage.NumEntries = uint16(numEntries)
+			newRIPMessage.Entries = entries
+
+			bytesArray := &bytes.Buffer{}
+			binary.Write(bytesArray, binary.BigEndian, newRIPMessage)
+
+			// send to channel that is shared with the host
+			r.MessageChan <- bytesArray.Bytes()
 		}
 	}
 }
 
 // should probably protect the routing table if it's shared by more than one go routine
-// TODO: need function that will send triggered updates when the routing tabel changes
 
 // This is for triggered updates upon updates to our routing table
 func (r *RipHandler) SendTriggeredUpdates(ReceivedFrom uint32, entriesToSend []RIPEntry, table *RoutingTable) {
 	// iterate through the map and send to every entry including the nextHop / ReceivedFrom address,
 	// we should instead send INFINITY
+	for i, entry := range entriesToSend {
+		if table.CheckRoute(entry.Address).NextHop == ReceivedFrom {
+			entriesToSend[i].Cost = INFINITY
+		}
+	}
 
-	// for _, entry := range entriesToSend {
+	// send to host
+	newRIPMessage := RIPMessage{}
+	newRIPMessage.Command = 1
+	newRIPMessage.NumEntries = uint16(len(entriesToSend))
+	newRIPMessage.Entries = entriesToSend
 
-	// }
+	bytesArray := &bytes.Buffer{}
+	binary.Write(bytesArray, binary.BigEndian, newRIPMessage)
+
+	// send to channel that is shared with the host
+	r.MessageChan <- bytesArray.Bytes()
 }
 
 // called for each new entry that is created

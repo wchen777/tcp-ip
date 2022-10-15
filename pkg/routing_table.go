@@ -28,7 +28,6 @@ func (rt *RoutingTable) CheckRoute(dest uint32) *RoutingTableEntry {
 	} else {
 		return nil
 	}
-
 }
 
 // Update function --> updates the routing table when a RIP packet is received

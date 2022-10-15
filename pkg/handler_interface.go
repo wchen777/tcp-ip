@@ -3,5 +3,5 @@ package pkg
 //import "ip/pkg"
 
 type Handler interface {
-	ReceivePacket(IPPacket, interface{})
+	ReceivePacket(packet IPPacket, data interface{})
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
 )
 
 const (
@@ -26,16 +27,38 @@ type LinkComm interface {
 type LinkInterface struct {
 	InterfaceNumber int
 	HostIPAddress   string
-	UDPport         uint16
-	HostConnection  *net.UDPConn
+
+	HostConnection  *net.UDPConn // this connects from current interface to the immediate link connection interface
 	IPPacketChannel chan IPPacket
-	stopped         bool
+
+	UDPDestPort uint16
+	UDPDestAddr string
+
+	stopped bool
+}
+
+/*
+	initialize connection to host on other side interface
+*/
+func (c *LinkInterface) InitializeHostConnection() (err error) {
+	addrString := fmt.Sprintf("%s:%s", c.UDPDestAddr, strconv.Itoa(int(c.UDPDestPort)))
+	udpAddr, err := net.ResolveUDPAddr("udp4", addrString)
+
+	UDPConn, err := net.DialUDP("udp4", nil, udpAddr)
+	if err != nil {
+		return
+	}
+	c.HostConnection = UDPConn
+
+	return
 }
 
 /*
 	Receive an ip packet from the link layer and send it to the ip layer
 */
 func (c *LinkInterface) Listen() (err error) {
+	defer c.HostConnection.Close() // once we're done listening, close the UDP connection
+
 	for {
 		// TODO: pls fix this. THIS IS BAD!!!!!! BAD FOR OUR HEALTH PLUS CPU HEALTH
 		// Take a look at sync.Cond, sync.WaitGroup
@@ -66,18 +89,16 @@ func (c *LinkInterface) Listen() (err error) {
 /*
 	send an ip packet through the link layer to a destination interface
 */
-func (c *LinkInterface) Send(ip_packet IPPacket, destInterface *LinkInterface) (err error) {
+func (c *LinkInterface) Send(ip_packet IPPacket) (err error) {
 	if c.stopped {
 		return nil
 	}
 
-	// Before sending, we need to make sure that we decrement the TTL and encode the checksum
-	// TODO: ^ where/when should that be handled?
 	bytesArray := &bytes.Buffer{}
 
 	// serializng IP packet into array of bytes
 	binary.Write(bytesArray, binary.BigEndian, ip_packet)
-	destInterface.HostConnection.Write(bytesArray.Bytes())
+	c.HostConnection.Write(bytesArray.Bytes())
 	return nil
 }
 
