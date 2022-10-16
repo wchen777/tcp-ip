@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"strconv"
 )
 
 const (
@@ -31,7 +30,7 @@ type LinkInterface struct {
 	HostConnection  *net.UDPConn // this connects from current interface to the immediate link connection interface
 	IPPacketChannel chan IPPacket
 
-	UDPDestPort uint16
+	UDPDestPort string
 	UDPDestAddr string
 
 	stopped bool
@@ -41,7 +40,7 @@ type LinkInterface struct {
 	initialize connection to host on other side interface
 */
 func (c *LinkInterface) InitializeHostConnection() (err error) {
-	addrString := fmt.Sprintf("%s:%s", c.UDPDestAddr, strconv.Itoa(int(c.UDPDestPort)))
+	addrString := fmt.Sprintf("%s:%s", c.UDPDestAddr, c.UDPDestPort)
 	udpAddr, err := net.ResolveUDPAddr("udp4", addrString)
 
 	UDPConn, err := net.DialUDP("udp4", nil, udpAddr)

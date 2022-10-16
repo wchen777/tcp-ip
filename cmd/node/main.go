@@ -50,11 +50,12 @@ func main() {
 
 	// create host struct
 	host := pkg.Host{}
-
 	// initialize host fields
 	host.InitHost()
 
 	scanner := bufio.NewScanner(f) // read from .lnx file:
+
+	var hostConn *net.UDPConn
 
 	l := 0
 	for scanner.Scan() {
@@ -73,21 +74,46 @@ func main() {
 				log.Fatal(err)
 			}
 
+			hostSocket, err := net.ListenUDP("udp4", listenAddr)
+
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			hostConn = hostSocket
+
+		} else {
+			// line 2+
+
+			// populate destination host, destination address, our link interface address fields
+			// run init host function
+
+			// add to host's dest addr to interface addr map
+			// add to host's interface addr to interface struct map
+
+			if len(line) != 4 {
+				log.Fatal("Ill formatted .lnx file, " +
+					"line must be <neighbor_addr> <neighbor_port> <host_interface_addr> <neighbor_interface_addr>")
+			}
+
+			hostIP := line[2]
+			neighborIP := line[3]
+
+			// create a LinkInterface for each line
+			linkIF := pkg.LinkInterface{
+				InterfaceNumber: l - 1,
+				HostConnection:  hostConn,
+				HostIPAddress:   hostIP,
+				UDPDestAddr:     line[0],
+				UDPDestPort:     line[1],
+			}
+
+			host.LocalIFs[hostIP] = &linkIF             // TODO: convert host IP
+			host.RemoteDestination[neighborIP] = hostIP // TODO: convert host IP and neighbor IP
 		}
 
 		l++
 	}
-
-	// initialization steps
-
-	// line 2+
-	// create a LinkInterface for each line
-	// initialize struct
-	// populate destination host, destination address, our link interface address fields
-	// run init host function
-
-	// add to host's dest addr to interface addr map
-	// add to host's interface addr to interface struct map
 
 	// register application handlers
 	ripHandler := NewRipHandler(host.MessageChannel)
