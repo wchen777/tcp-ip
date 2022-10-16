@@ -36,10 +36,11 @@ func NewTestHandler() pkg.Handler {
 func printInterfaces(h *pkg.Host) {
 	fmt.Printf("id  state  local  remote")
 	for addrLocalIF, localIF := range h.LocalIFs {
+		addrLocal := net.IPv4(byte(addrLocalIF>>24), byte(addrLocalIF>>16), byte(addrLocalIF>>8), byte(addrLocalIF)).String()
 		if localIF.Stopped {
-			fmt.Printf("%d  %s  %s  %s", localIF.InterfaceNumber, "down", addrLocalIF, localIF.UDPDestAddr)
+			fmt.Printf("%d  %s  %s  %s", localIF.InterfaceNumber, "down", addrLocal, localIF.UDPDestAddr)
 		} else {
-			fmt.Printf("%d  %s  %s  %s", localIF.InterfaceNumber, "up", addrLocalIF, localIF.UDPDestAddr)
+			fmt.Printf("%d  %s  %s  %s", localIF.InterfaceNumber, "up", addrLocal, localIF.UDPDestAddr)
 		}
 	}
 }
