@@ -29,6 +29,20 @@ func NewTestHandler() pkg.Handler {
 	return &pkg.TestHandler{}
 }
 
+/*
+	Routine for printing out the active interfaces
+*/
+func printInterfaces(h *pkg.Host) {
+	fmt.Printf("id  state  local  remote")
+	for addrLocalIF, localIF := range h.LocalIFs {
+		if localIF.Stopped {
+			fmt.Printf("%d  %s  %s  %s", localIF.InterfaceNumber, "down", addrLocalIF, localIF.UDPDestAddr)
+		} else {
+			fmt.Printf("%d  %s  %s  %s", localIF.InterfaceNumber, "up", addrLocalIF, localIF.UDPDestAddr)
+		}
+	}
+}
+
 // where everything should be initialized
 // implement the CLI
 func main() {
@@ -56,6 +70,8 @@ func main() {
 
 	scanner := bufio.NewScanner(f) // read from .lnx file:
 
+	var hostSocket *net.UDPConn
+
 	l := 0
 	for scanner.Scan() {
 		line := strings.Split(scanner.Text(), " ")
@@ -73,21 +89,30 @@ func main() {
 				log.Fatal(err)
 			}
 
+			// returns a host socket + binds to the specified port, passed to each of the link interfaces
+			hostSocket, err = net.ListenUDP("udp4", listenAddr)
+		} else {
+			// line 2+
+			// create a LinkInterface for each line
+			// initialize struct
+			// populate destination host, destination address, our link interface address fields
+			// run init host function
+
+			// add to host's dest addr to interface addr map
+			// add to host's interface addr to interface struct map
+
+			if len(line) != 4 {
+				log.Fatal("Ill formatted .lnx file, first line must be <neighbor_addr> <neighbor_port> <> <>")
+			}
+
+			linkIF := pkg.LinkInterface{
+				HostConnection: hostSocket,
+			}
+
 		}
 
 		l++
 	}
-
-	// initialization steps
-
-	// line 2+
-	// create a LinkInterface for each line
-	// initialize struct
-	// populate destination host, destination address, our link interface address fields
-	// run init host function
-
-	// add to host's dest addr to interface addr map
-	// add to host's interface addr to interface struct map
 
 	// register application handlers
 	ripHandler := NewRipHandler(host.MessageChannel)
@@ -112,10 +137,14 @@ func main() {
 		switch commands[0] {
 		case "interfaces":
 			// information about interfaces
+			printInterfaces(&host)
 		case "li":
 			// information about the interfaces
+			printInterfaces(&host)
 		case "routes":
+			// routing table information
 		case "lr":
+			// routing table information
 		case "down":
 		case "up":
 		case "send":

@@ -28,19 +28,20 @@ type LinkInterface struct {
 	InterfaceNumber int
 	HostIPAddress   string
 
-	HostConnection  *net.UDPConn // this connects from current interface to the immediate link connection interface
+	HostConnection  *net.UDPConn
+	DestConnection  *net.UDPConn // this connects from current interface to the immediate link connection interface
 	IPPacketChannel chan IPPacket
 
 	UDPDestPort uint16
 	UDPDestAddr string
 
-	stopped bool
+	Stopped bool
 }
 
 /*
 	initialize connection to host on other side interface
 */
-func (c *LinkInterface) InitializeHostConnection() (err error) {
+func (c *LinkInterface) InitializeDestConnection() (err error) {
 	addrString := fmt.Sprintf("%s:%s", c.UDPDestAddr, strconv.Itoa(int(c.UDPDestPort)))
 	udpAddr, err := net.ResolveUDPAddr("udp4", addrString)
 
@@ -48,7 +49,8 @@ func (c *LinkInterface) InitializeHostConnection() (err error) {
 	if err != nil {
 		return
 	}
-	c.HostConnection = UDPConn
+	c.DestConnection = UDPConn
+	// defer the connection close after initialization
 
 	return
 }
@@ -98,7 +100,7 @@ func (c *LinkInterface) Send(ip_packet IPPacket) (err error) {
 
 	// serializng IP packet into array of bytes
 	binary.Write(bytesArray, binary.BigEndian, ip_packet)
-	c.HostConnection.Write(bytesArray.Bytes())
+	c.DestConnection.Write(bytesArray.Bytes())
 	return nil
 }
 
