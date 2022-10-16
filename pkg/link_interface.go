@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"strconv"
 )
 
 const (
@@ -32,7 +31,7 @@ type LinkInterface struct {
 	DestConnection  *net.UDPConn // this connects from current interface to the immediate link connection interface
 	IPPacketChannel chan IPPacket
 
-	UDPDestPort uint16
+	UDPDestPort string
 	UDPDestAddr string
 
 	Stopped bool
@@ -41,8 +40,8 @@ type LinkInterface struct {
 /*
 	initialize connection to host on other side interface
 */
-func (c *LinkInterface) InitializeDestConnection() (err error) {
-	addrString := fmt.Sprintf("%s:%s", c.UDPDestAddr, strconv.Itoa(int(c.UDPDestPort)))
+func (c *LinkInterface) InitializeHostConnection() (err error) {
+	addrString := fmt.Sprintf("%s:%s", c.UDPDestAddr, c.UDPDestPort)
 	udpAddr, err := net.ResolveUDPAddr("udp4", addrString)
 
 	UDPConn, err := net.DialUDP("udp4", nil, udpAddr)
@@ -64,7 +63,7 @@ func (c *LinkInterface) Listen() (err error) {
 	for {
 		// TODO: pls fix this. THIS IS BAD!!!!!! BAD FOR OUR HEALTH PLUS CPU HEALTH
 		// Take a look at sync.Cond, sync.WaitGroup
-		if c.stopped {
+		if c.Stopped {
 			continue
 		}
 
@@ -92,7 +91,7 @@ func (c *LinkInterface) Listen() (err error) {
 	send an ip packet through the link layer to a destination interface
 */
 func (c *LinkInterface) Send(ip_packet IPPacket) (err error) {
-	if c.stopped {
+	if c.Stopped {
 		return nil
 	}
 
@@ -108,12 +107,12 @@ func (c *LinkInterface) Send(ip_packet IPPacket) (err error) {
 	enable/disable link interface at runtime
 */
 func (c *LinkInterface) Enable() {
-	c.stopped = false
+	c.Stopped = false
 }
 
 /*
 	enable/disable link interface at runtime
 */
 func (c *LinkInterface) Disable() {
-	c.stopped = true
+	c.Stopped = true
 }
