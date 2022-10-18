@@ -75,6 +75,7 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 func (r *RipHandler) InitHandler(data interface{}) {
 	// send updates to all neighbors with entries from its routing table
 	var table *RoutingTable
+	log.Printf("In rip_handler.go: %T\n", table)
 
 	if val, ok := data.(*RoutingTable); ok {
 		table = val

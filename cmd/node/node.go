@@ -1,4 +1,4 @@
-package cmd
+package main
 
 import (
 	"bufio"
@@ -82,7 +82,7 @@ func main() {
 	args := os.Args
 
 	if len(args) != 2 {
-		fmt.Println("Usage: ./node <path to .lnx>")
+		log.Fatal("Usage: ./node <path to .lnx>")
 	}
 
 	filepath := args[1]
@@ -173,9 +173,11 @@ func main() {
 	ripHandler := NewRipHandler(host.MessageChannel)
 	testHandler := NewTestHandler()
 
+	log.Print(host.RoutingTable.Table)
 	host.RegisterHandler(RIP_PROTOCOL, ripHandler) //
 	host.RegisterHandler(TEST_PROTOCOL, testHandler)
-	ripHandler.InitHandler(host.RoutingTable)
+	log.Printf("In node.go: %T\n", routingTable)
+	ripHandler.InitHandler(routingTable)
 
 	// start listening for the host
 	host.StartHost()
@@ -190,6 +192,7 @@ func main() {
 	defer w.Flush()
 
 	for {
+		fmt.Print("<")
 		line := scanner.Text()
 		commands := strings.Split(line, " ")
 

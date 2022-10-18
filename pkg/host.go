@@ -49,7 +49,6 @@ func (h *Host) InitHost() {
 */
 func (h *Host) RegisterHandler(protocolNum int, handler Handler) {
 	h.HandlerRegistry[protocolNum] = handler
-	handler.InitHandler("")
 }
 
 /*
