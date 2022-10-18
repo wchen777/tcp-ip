@@ -39,13 +39,13 @@ func NewTestHandler() pkg.Handler {
 	Routine for printing out the active interfaces
 */
 func printInterfaces(h *pkg.Host) {
-	fmt.Printf("id  state  local  remote")
+	fmt.Printf("id  state  local  remote\n")
 	for addrLocalIF, localIF := range h.LocalIFs {
 		addrLocal := net.IPv4(byte(addrLocalIF>>24), byte(addrLocalIF>>16), byte(addrLocalIF>>8), byte(addrLocalIF)).String()
 		if localIF.Stopped {
-			fmt.Printf("%d  %s  %s  %s", localIF.InterfaceNumber, "down", addrLocal, localIF.UDPDestAddr)
+			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "down", addrLocal, localIF.UDPDestAddr)
 		} else {
-			fmt.Printf("%d  %s  %s  %s", localIF.InterfaceNumber, "up", addrLocal, localIF.UDPDestAddr)
+			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "up", addrLocal, localIF.UDPDestAddr)
 		}
 	}
 }
@@ -54,12 +54,12 @@ func printInterfaces(h *pkg.Host) {
 	Routine for printing out the routing table
 */
 func printRoutingTable(h *pkg.Host) {
-	fmt.Printf("dest  next  cost")
+	fmt.Printf("dest  next  cost\n")
 	for dest, entry := range h.RoutingTable.Table {
 		destAddr := net.IPv4(byte(dest>>24), byte(dest>>16), byte(dest>>8), byte(dest)).String()
 		nextHop := entry.NextHop
 		nextHopAddr := net.IPv4(byte(nextHop>>24), byte(nextHop>>16), byte(nextHop>>8), byte(nextHop)).String()
-		fmt.Printf("%s  %s   %d", destAddr, nextHopAddr, entry.Cost)
+		fmt.Printf("%s  %s   %d\n", destAddr, nextHopAddr, entry.Cost)
 	}
 }
 
@@ -153,6 +153,8 @@ func main() {
 				HostIPAddress:   hostIP,
 				UDPDestAddr:     line[0],
 				UDPDestPort:     line[1],
+				Stopped:         false,
+				IPPacketChannel: host.PacketChannel,
 			}
 
 			hostIPAddr := binary.BigEndian.Uint32(net.ParseIP(hostIP).To4())
@@ -160,6 +162,8 @@ func main() {
 
 			neighborIPAddr := binary.BigEndian.Uint32(net.ParseIP(neighborIP).To4())
 			host.RemoteDestination[neighborIPAddr] = hostIPAddr
+
+			linkIF.InitializeHostConnection()
 		}
 		l++
 	}
@@ -177,7 +181,7 @@ func main() {
 	host.RegisterHandler(RIP_PROTOCOL, ripHandler) //
 	host.RegisterHandler(TEST_PROTOCOL, testHandler)
 	log.Printf("In node.go: %T\n", routingTable)
-	ripHandler.InitHandler(routingTable)
+	go ripHandler.InitHandler(routingTable)
 
 	// start listening for the host
 	host.StartHost()
@@ -188,10 +192,9 @@ func main() {
 	// for table input
 	w := new(tabwriter.Writer)
 	// minwidth, tabwidth, padding, padchar, flags
-	w.Init(os.Stdout, 16, 12, 0, '\t', 0)
-	defer w.Flush()
+	w.Init(os.Stdout, 16, 10, 0, '\t', 0)
 
-	for {
+	for scanner.Scan() {
 		fmt.Print("<")
 		line := scanner.Text()
 		commands := strings.Split(line, " ")
@@ -217,8 +220,11 @@ func main() {
 		case "send":
 		case "help":
 			printHelp(w)
+			w.Flush()
 		default:
+			log.Printf("reached default case\n")
 			printHelp(w)
+			w.Flush()
 		}
 	}
 }

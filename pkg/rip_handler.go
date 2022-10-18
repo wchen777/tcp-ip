@@ -19,7 +19,7 @@ const (
 
 func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	log.Print("Printing out packet data for RIP ...")
-	log.Print(packet.Data)
+	log.Print(packet.Header)
 
 	var table *RoutingTable
 
@@ -93,10 +93,15 @@ func (r *RipHandler) InitHandler(data interface{}) {
 	newRIPMessage.Entries = entries
 
 	bytesArray := &bytes.Buffer{}
-	binary.Write(bytesArray, binary.BigEndian, newRIPMessage)
+	binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
+	binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
+	binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
 
 	// send to channel that is shared with the host
+	log.Printf("RIP message: %v\n", bytesArray.Bytes())
 	r.MessageChan <- bytesArray.Bytes()
+
+	go r.SendUpdates(table)
 }
 
 func (r *RipHandler) GetAllEntries(table *RoutingTable) []RIPEntry {
@@ -130,6 +135,8 @@ func (r *RipHandler) SendUpdates(table *RoutingTable) {
 			newRIPMessage.Entries = entries
 
 			bytesArray := &bytes.Buffer{}
+			binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
+			binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
 			binary.Write(bytesArray, binary.BigEndian, newRIPMessage)
 
 			// send to channel that is shared with the host
