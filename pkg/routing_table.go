@@ -18,7 +18,11 @@ type RoutingTable struct {
 	TableLock sync.Mutex
 }
 
-// XheckRoute function --> gets the entry from the table when routing IP packets
+func (rt *RoutingTable) CreateEntry(nextHop uint32, cost uint32) *RoutingTableEntry {
+	return &RoutingTableEntry{NextHop: nextHop, Cost: cost, UpdateChan: make(chan bool, 1)}
+}
+
+// CheckRoute function --> gets the entry from the table when routing IP packets
 func (rt *RoutingTable) CheckRoute(dest uint32) *RoutingTableEntry {
 	rt.TableLock.Lock()
 	defer rt.TableLock.Unlock()

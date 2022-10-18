@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"ip/pkg"
 	"log"
 	"net"
 	"os"
 	"strings"
+	"text/tabwriter"
 )
 
 const (
@@ -16,10 +18,13 @@ const (
 	TEST_PROTOCOL = 0
 )
 
-func InitRoutingTable() pkg.RoutingTable {
-	return pkg.RoutingTable{
-		Table: make(map[uint32]*pkg.RoutingTableEntry),
+func InitRoutingTable(localIFs map[uint32]*pkg.LinkInterface) *pkg.RoutingTable {
+	routingTable := pkg.RoutingTable{Table: make(map[uint32]*pkg.RoutingTableEntry)}
+
+	for localIFAddr := range localIFs {
+		routingTable.Table[localIFAddr] = routingTable.CreateEntry(localIFAddr, 0)
 	}
+	return &routingTable
 }
 
 func NewRipHandler(msgChan chan []byte) pkg.Handler {
@@ -45,8 +50,33 @@ func printInterfaces(h *pkg.Host) {
 	}
 }
 
+/*
+	Routine for printing out the routing table
+*/
+func printRoutingTable(h *pkg.Host) {
+	fmt.Printf("dest  next  cost")
+	for dest, entry := range h.RoutingTable.Table {
+		destAddr := net.IPv4(byte(dest>>24), byte(dest>>16), byte(dest>>8), byte(dest)).String()
+		nextHop := entry.NextHop
+		nextHopAddr := net.IPv4(byte(nextHop>>24), byte(nextHop>>16), byte(nextHop>>8), byte(nextHop)).String()
+		fmt.Printf("%s  %s   %d", destAddr, nextHopAddr, entry.Cost)
+	}
+}
+
+/*
+	print out help usage for the node
+*/
+func printHelp(w io.Writer) {
+	fmt.Fprintf(w, "send <ip> <proto> <string> \t - Sends the string payload to the given ip address with the specified protocol.\n")
+	fmt.Fprintf(w, "down <interface-num> \t - Bring an interface \"down\".\n")
+	fmt.Fprintf(w, "up <interface-num> \t - Bring an interface \"up\".\n")
+	fmt.Fprintf(w, "interfaces, li <file> \t - Print information about each interface, one per line. Optionally specify a destination file.\n")
+	fmt.Fprintf(w, "routes, lr <file>\t - Print information about the route to each known destination, one per line. Optionally specify a destination file.\n")
+	fmt.Fprintf(w, "quit, q \t - Quit this node.\n")
+	fmt.Fprintf(w, "help, h \t - Show this help.\n")
+}
+
 // where everything should be initialized
-// implement the CLI
 func main() {
 
 	args := os.Args
@@ -96,6 +126,7 @@ func main() {
 				log.Fatal(err)
 			}
 
+			// The socket that we will be listening to
 			hostConn = hostSocket
 
 		} else {
@@ -133,22 +164,31 @@ func main() {
 		l++
 	}
 
+	// initailize and fill routing table with our information
+	// TODO: doesn't look like information is being filled at the moment
+	routingTable := InitRoutingTable(host.LocalIFs)
+	host.RoutingTable = routingTable
+
 	// register application handlers
 	ripHandler := NewRipHandler(host.MessageChannel)
 	testHandler := NewTestHandler()
 
-	host.RegisterHandler(RIP_PROTOCOL, ripHandler)
+	host.RegisterHandler(RIP_PROTOCOL, ripHandler) //
 	host.RegisterHandler(TEST_PROTOCOL, testHandler)
-
-	// initailize and fill routing table with our information
-	routingTable := InitRoutingTable()
-	host.RoutingTable = &routingTable
+	ripHandler.InitHandler(host.RoutingTable)
 
 	// start listening for the host
 	host.StartHost()
 
 	// start CLI
 	scanner = bufio.NewScanner(os.Stdin)
+
+	// for table input
+	w := new(tabwriter.Writer)
+	// minwidth, tabwidth, padding, padchar, flags
+	w.Init(os.Stdout, 16, 12, 0, '\t', 0)
+	defer w.Flush()
+
 	for {
 		line := scanner.Text()
 		commands := strings.Split(line, " ")
@@ -162,11 +202,20 @@ func main() {
 			printInterfaces(&host)
 		case "routes":
 			// routing table information
+			printRoutingTable(&host)
 		case "lr":
 			// routing table information
+			printRoutingTable(&host)
 		case "down":
 		case "up":
+			if len(commands) < 2 {
+				continue
+			}
 		case "send":
+		case "help":
+			printHelp(w)
+		default:
+			printHelp(w)
 		}
 	}
 }

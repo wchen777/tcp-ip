@@ -71,6 +71,33 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	r.SendTriggeredUpdates(nextHop, updatedEntries, table)
 }
 
+// TODO: modularize getting all entries
+func (r *RipHandler) InitHandler(data interface{}) {
+	// send updates to all neighbors with entries from its routing table
+	var table *RoutingTable
+
+	if val, ok := data.(*RoutingTable); ok {
+		table = val
+	} else {
+		log.Print("Unable to create routing table from data")
+		return
+	}
+
+	entries := r.GetAllEntries(table)
+	numEntries := len(entries)
+
+	newRIPMessage := RIPMessage{}
+	newRIPMessage.Command = 1
+	newRIPMessage.NumEntries = uint16(numEntries)
+	newRIPMessage.Entries = entries
+
+	bytesArray := &bytes.Buffer{}
+	binary.Write(bytesArray, binary.BigEndian, newRIPMessage)
+
+	// send to channel that is shared with the host
+	r.MessageChan <- bytesArray.Bytes()
+}
+
 func (r *RipHandler) GetAllEntries(table *RoutingTable) []RIPEntry {
 	table.TableLock.Lock()
 	defer table.TableLock.Unlock()

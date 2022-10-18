@@ -49,6 +49,7 @@ func (h *Host) InitHost() {
 */
 func (h *Host) RegisterHandler(protocolNum int, handler Handler) {
 	h.HandlerRegistry[protocolNum] = handler
+	handler.InitHandler("")
 }
 
 /*
@@ -190,6 +191,4 @@ func (h *Host) StartHost() {
 
 	// start goroutine for read from link layer
 	go h.ReadFromLinkLayer()
-
-	// TODO: send to our own interfaces and populate our routing table
 }
