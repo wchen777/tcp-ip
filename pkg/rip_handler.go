@@ -81,7 +81,7 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	}
 
 	// Send an update to neighbors the entries that have changed
-	r.SendTriggeredUpdates(nextHop, updatedEntries, table)
+	go r.SendTriggeredUpdates(nextHop, updatedEntries, table)
 }
 
 // TODO: modularize getting all entries

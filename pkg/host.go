@@ -180,7 +180,7 @@ func (h *Host) ReadFromLinkLayer() {
 				// call the appropriate handler function, otherwise packet is "dropped"
 				log.Printf("Protocol number: %d\n", packet.Header.Protocol)
 				if handler, exists := h.HandlerRegistry[packet.Header.Protocol]; exists {
-					handler.ReceivePacket(packet, h.RoutingTable)
+					go handler.ReceivePacket(packet, h.RoutingTable)
 				} else {
 					log.Print("Dropping packet: handler protocol not registered")
 				}
@@ -189,7 +189,7 @@ func (h *Host) ReadFromLinkLayer() {
 				packet.Header.TTL -= 1
 
 				// recompute checksum, look up where the packet needs to be sent, forward packet
-				h.SendToLinkLayer(destAddr, packet)
+				go h.SendToLinkLayer(destAddr, packet)
 			}
 		}
 	}
