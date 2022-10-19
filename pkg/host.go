@@ -45,6 +45,24 @@ func (h *Host) InitHost() {
 }
 
 /*
+	general send function for the command in the driver
+*/
+func (h *Host) SendPacket(destAddr uint32, protocol int, data string) {
+	// determine the next hop
+	nextHop := h.RoutingTable.CheckRoute(destAddr).NextHop
+
+	// lookup next hop address in remote destination map to find our interface address
+	if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
+		// lookup correct interface from the address to send this packet on
+		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
+			// create the packet and send to link layer
+			packet := h.CreateIPPacket(addrOfInterface, destAddr, []byte(data))
+			localInterface.Send(packet)
+		}
+	}
+}
+
+/*
 	populate the handler registry with the given handler
 */
 func (h *Host) RegisterHandler(protocolNum int, handler Handler) {
@@ -64,7 +82,6 @@ func (h *Host) SendToNeighbors(dest uint32, packet IPPacket) {
 	if addrOfInterface, exists := h.RemoteDestination[dest]; exists {
 		// lookup correct interface from the address to send this packet on
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
-			log.Print("Sending packet")
 			localInterface.Send(packet)
 		}
 	}
@@ -79,7 +96,7 @@ func (h *Host) ReadFromHandler() {
 	for {
 		select {
 		case data := <-h.MessageChannel:
-			// log.Printf("data received here: %v\n", data)
+			//log.Printf("data received here: %v\n", data)
 
 			if len(data) == 0 { // check for empty data
 				break
@@ -127,8 +144,6 @@ func (h *Host) ReadFromLinkLayer() {
 	for {
 		select {
 		case packet := <-h.PacketChannel:
-			log.Print("Logging packet header:")
-			log.Print(packet.Header)
 			// Verification checks for the ip packet
 
 			// IP version --> if the version is IPv6, the packet should be dropped
@@ -145,9 +160,6 @@ func (h *Host) ReadFromLinkLayer() {
 			}
 
 			if newCheckSum != uint16(checkSum) {
-				log.Printf("original checksum: %d\n", uint16(checkSum))
-				log.Printf("new checksum: %d\n", newCheckSum)
-
 				log.Print("Dropping packet: checksum failed")
 				continue
 			}
@@ -197,8 +209,6 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 
 	// This is where the routing table is consulted
 	// hit routing table to find next hop address
-	log.Printf("Destination address: %d\n", destAddr)
-	log.Printf("Return from check route: %v\n", h.RoutingTable.CheckRoute(destAddr))
 	nextHop := h.RoutingTable.CheckRoute(destAddr).NextHop
 
 	// lookup next hop address in remote destination map to find our interface address

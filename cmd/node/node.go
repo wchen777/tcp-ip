@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 )
@@ -76,6 +77,34 @@ func printHelp(w io.Writer) {
 	fmt.Fprintf(w, "help, h \t - Show this help.\n")
 }
 
+/*
+
+ */
+func sendCommand(h *pkg.Host, line string) {
+	args := strings.SplitN(line, " ", 4)
+
+	destAddr := binary.BigEndian.Uint32(net.ParseIP(args[1]).To4())
+	protocolNum, err := strconv.Atoi(args[2])
+
+	if err != nil || protocolNum != TEST_PROTOCOL {
+		log.Print("Invalid protocol num")
+		return
+	}
+
+	h.SendPacket(destAddr, protocolNum, args[3])
+}
+
+/*
+	q command to quit out of REPL and clean up UDP sending connections
+*/
+func quit(h *pkg.Host) {
+	for _, interf := range h.LocalIFs {
+		interf.DestConnection.Close()
+	}
+
+	os.Exit(0)
+}
+
 // where everything should be initialized
 func main() {
 
@@ -102,6 +131,7 @@ func main() {
 	scanner := bufio.NewScanner(f) // read from .lnx file:
 
 	var hostConn *net.UDPConn
+	defer hostConn.Close()
 
 	l := 0
 	for scanner.Scan() {
@@ -145,31 +175,30 @@ func main() {
 
 			hostIP := line[2]
 			neighborIP := line[3]
+			hostIPAddr := binary.BigEndian.Uint32(net.ParseIP(hostIP).To4())
+			neighborIPAddr := binary.BigEndian.Uint32(net.ParseIP(neighborIP).To4())
 
 			// create a LinkInterface for each line
 			linkIF := pkg.LinkInterface{
 				InterfaceNumber: l - 1,
 				HostConnection:  hostConn,
-				HostIPAddress:   hostIP,
+				HostIPAddress:   hostIPAddr,
 				UDPDestAddr:     line[0],
 				UDPDestPort:     line[1],
 				Stopped:         false,
 				IPPacketChannel: host.PacketChannel,
 			}
 
-			hostIPAddr := binary.BigEndian.Uint32(net.ParseIP(hostIP).To4())
 			host.LocalIFs[hostIPAddr] = &linkIF
 
-			neighborIPAddr := binary.BigEndian.Uint32(net.ParseIP(neighborIP).To4())
 			host.RemoteDestination[neighborIPAddr] = hostIPAddr
 
-			linkIF.InitializeHostConnection()
+			linkIF.InitializeDestConnection()
 		}
 		l++
 	}
 
 	// initailize and fill routing table with our information
-	// TODO: doesn't look like information is being filled at the moment
 	routingTable := InitRoutingTable(host.LocalIFs)
 	host.RoutingTable = routingTable
 
@@ -194,8 +223,8 @@ func main() {
 	// minwidth, tabwidth, padding, padchar, flags
 	w.Init(os.Stdout, 16, 10, 0, '\t', 0)
 
+	fmt.Print("> ")
 	for scanner.Scan() {
-		fmt.Print("<")
 		line := scanner.Text()
 		commands := strings.Split(line, " ")
 
@@ -213,18 +242,33 @@ func main() {
 			// routing table information
 			printRoutingTable(&host)
 		case "down":
+			if len(commands) < 2 {
+				log.Print("Invalid number of arguments for down")
+				break
+			}
 		case "up":
 			if len(commands) < 2 {
-				continue
+				log.Print("Invalid number of arguments for up")
+				break
 			}
 		case "send":
-		case "help":
-			printHelp(w)
-			w.Flush()
+			if len(commands) < 4 {
+				log.Print("Invalid number of arguments for send")
+				break
+			}
+			sendCommand(&host, line)
+			break
+		case "q":
+			if len(commands) != 1 {
+				log.Print("Invalid number of arguments for q")
+				break
+			}
+			quit(&host)
 		default:
-			log.Printf("reached default case\n")
 			printHelp(w)
 			w.Flush()
 		}
+
+		fmt.Print("> ")
 	}
 }

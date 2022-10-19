@@ -18,8 +18,7 @@ const (
 )
 
 func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
-	log.Print("Printing out packet data for RIP ...")
-	log.Print(packet.Header)
+	log.Print("Reached RIP handler...")
 
 	var table *RoutingTable
 
@@ -33,7 +32,20 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	// deserialize the data to be a RIP command
 	packetDataBuf := bytes.NewReader(packet.Data)
 	ripEntry := RIPMessage{}
-	binary.Read(packetDataBuf, binary.BigEndian, &ripEntry)
+	ripEntry.Entries = make([]RIPEntry, 0)
+	binary.Read(packetDataBuf, binary.BigEndian, &ripEntry.Command)
+	binary.Read(packetDataBuf, binary.BigEndian, &ripEntry.NumEntries)
+
+	log.Printf("RIP message: %d\n", ripEntry.NumEntries)
+
+	// TODO: does casting here cause any issues?
+	for i := 0; i < int(ripEntry.NumEntries); i++ {
+		entry := RIPEntry{}
+		binary.Read(packetDataBuf, binary.BigEndian, &entry.Cost)
+		binary.Read(packetDataBuf, binary.BigEndian, &entry.Address)
+		binary.Read(packetDataBuf, binary.BigEndian, &entry.Mask)
+		ripEntry.Entries = append(ripEntry.Entries, entry)
+	}
 
 	// the next hop's destination address would be in the ip header
 	// i.e. neighbor's destination address
@@ -43,22 +55,23 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	for _, newEntry := range ripEntry.Entries {
 		oldEntry := table.CheckRoute(newEntry.Address)
 		if oldEntry == nil {
+			log.Printf("Adding new entry: %v\n", newEntry)
 			// if D isn't in the table, add <D, C, N>
 			updateChan := make(chan bool, 1)
 			table.AddRoute(newEntry.Address, newEntry.Cost+1, nextHop, updateChan)
 			// send new update to every neighbor except for the one we received message from
 			updatedEntries = append(updatedEntries, newEntry)
-			r.waitForUpdates(newEntry.Address, updateChan, table)
+			go r.waitForUpdates(newEntry.Address, updateChan, table)
 		} else {
 			// D --> destination address
 			// C_old --> the cost
 			// M --> the neighbor / next hop
 
 			// If existing entry <D, C_old, M>
-			if newEntry.Cost < oldEntry.Cost || newEntry.Cost > oldEntry.Cost && oldEntry.NextHop == nextHop {
+			if newEntry.Cost+1 < oldEntry.Cost || newEntry.Cost+1 > oldEntry.Cost && oldEntry.NextHop == nextHop {
 				// if C < C_old, update table <D, C, N> --> found better route
 				// if C > C_old and N == M, update table <D, C, M> --> increased cost
-				table.UpdateRoute(newEntry.Address, newEntry.Cost, nextHop)
+				table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
 				updatedEntries = append(updatedEntries, newEntry)
 			}
 
@@ -75,7 +88,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 func (r *RipHandler) InitHandler(data interface{}) {
 	// send updates to all neighbors with entries from its routing table
 	var table *RoutingTable
-	log.Printf("In rip_handler.go: %T\n", table)
 
 	if val, ok := data.(*RoutingTable); ok {
 		table = val
@@ -98,7 +110,6 @@ func (r *RipHandler) InitHandler(data interface{}) {
 	binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
 
 	// send to channel that is shared with the host
-	log.Printf("RIP message: %v\n", bytesArray.Bytes())
 	r.MessageChan <- bytesArray.Bytes()
 
 	go r.SendUpdates(table)
@@ -137,9 +148,10 @@ func (r *RipHandler) SendUpdates(table *RoutingTable) {
 			bytesArray := &bytes.Buffer{}
 			binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
 			binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
-			binary.Write(bytesArray, binary.BigEndian, newRIPMessage)
+			binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
 
 			// send to channel that is shared with the host
+			log.Printf("Sending to host for updates\n")
 			r.MessageChan <- bytesArray.Bytes()
 		}
 	}
@@ -152,7 +164,11 @@ func (r *RipHandler) SendTriggeredUpdates(ReceivedFrom uint32, entriesToSend []R
 	// iterate through the map and send to every entry including the nextHop / ReceivedFrom address,
 	// we should instead send INFINITY
 	for i, entry := range entriesToSend {
-		if table.CheckRoute(entry.Address).NextHop == ReceivedFrom {
+		log.Printf("Adding new entry: %v\n", entry)
+		newEntry := table.CheckRoute(entry.Address)
+		if newEntry == nil {
+			log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
+		} else if newEntry.NextHop == ReceivedFrom {
 			entriesToSend[i].Cost = INFINITY
 		}
 	}
@@ -180,10 +196,12 @@ func (r *RipHandler) waitForUpdates(newEntryAddress uint32, updateChan chan bool
 		case update := <-updateChan:
 			// handling the message
 			if update {
+				log.Printf("Updating the timeout")
 				timeout = time.After(time.Duration(TIMEOUT * time.Second))
 			}
 		case <-timeout:
 			// If we have reached the timeout case, then we should remove the entry and return
+			log.Printf("timeout: %d", newEntryAddress)
 			table.RemoveRoute(newEntryAddress)
 			return
 		}

@@ -26,7 +26,7 @@ type LinkComm interface {
 
 type LinkInterface struct {
 	InterfaceNumber int
-	HostIPAddress   string
+	HostIPAddress   uint32
 
 	HostConnection  *net.UDPConn
 	DestConnection  *net.UDPConn // this connects from current interface to the immediate link connection interface
@@ -41,7 +41,7 @@ type LinkInterface struct {
 /*
 	initialize connection to host on other side interface
 */
-func (c *LinkInterface) InitializeHostConnection() (err error) {
+func (c *LinkInterface) InitializeDestConnection() (err error) {
 	addrString := fmt.Sprintf("%s:%s", c.UDPDestAddr, c.UDPDestPort)
 	udpAddr, err := net.ResolveUDPAddr("udp4", addrString)
 
@@ -58,7 +58,6 @@ func (c *LinkInterface) InitializeHostConnection() (err error) {
 	Receive an ip packet from the link layer and send it to the ip layer
 */
 func (c *LinkInterface) Listen() (err error) {
-	defer c.HostConnection.Close() // once we're done listening, close the UDP connection
 
 	for {
 		// TODO: pls fix this. THIS IS BAD!!!!!! BAD FOR OUR HEALTH PLUS CPU HEALTH
