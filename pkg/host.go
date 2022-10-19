@@ -51,6 +51,25 @@ func (h *Host) RegisterHandler(protocolNum int, handler Handler) {
 	h.HandlerRegistry[protocolNum] = handler
 }
 
+func (h *Host) SendToNeighbors(dest uint32, packet IPPacket) {
+
+	newCheckSum, err := computeChecksum(packet)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	packet.Header.Checksum = int(newCheckSum)
+
+	// lookup next hop address in remote destination map to find our interface address
+	if addrOfInterface, exists := h.RemoteDestination[dest]; exists {
+		// lookup correct interface from the address to send this packet on
+		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
+			log.Print("Sending packet")
+			localInterface.Send(packet)
+		}
+	}
+}
+
 /*
 	This will read from each of the interfaces and send the messages
 */
@@ -60,6 +79,12 @@ func (h *Host) ReadFromHandler() {
 	for {
 		select {
 		case data := <-h.MessageChannel:
+			// log.Printf("data received here: %v\n", data)
+
+			if len(data) == 0 { // check for empty data
+				break
+			}
+
 			// if we receive a message from the channel
 			// send to all the neighbors
 			// by using the remote destination map
@@ -67,7 +92,7 @@ func (h *Host) ReadFromHandler() {
 				// Create an IP packet here
 				packet := h.CreateIPPacket(src, dest, data)
 				// send to the link layer
-				h.SendToLinkLayer(dest, packet)
+				h.SendToNeighbors(dest, packet)
 			}
 		}
 	}
@@ -75,7 +100,7 @@ func (h *Host) ReadFromHandler() {
 
 func (h *Host) CreateIPPacket(src uint32, dest uint32, data []byte) IPPacket {
 	srcAddress := net.IPv4(byte(src>>24), byte(src>>16), byte(src>>8), byte(src))
-	destAddress := net.IPv4(byte(src>>24), byte(src>>16), byte(src>>8), byte(src))
+	destAddress := net.IPv4(byte(dest>>24), byte(dest>>16), byte(dest>>8), byte(dest))
 
 	header := ipv4.Header{
 		Version:  4,
@@ -86,7 +111,7 @@ func (h *Host) CreateIPPacket(src uint32, dest uint32, data []byte) IPPacket {
 		Flags:    0,
 		FragOff:  0,
 		TTL:      32,
-		Protocol: 0,
+		Protocol: 200,
 		Checksum: 0, // checksum will be computed in send link layer
 		Src:      srcAddress,
 		Dst:      destAddress,
@@ -120,6 +145,9 @@ func (h *Host) ReadFromLinkLayer() {
 			}
 
 			if newCheckSum != uint16(checkSum) {
+				log.Printf("original checksum: %d\n", uint16(checkSum))
+				log.Printf("new checksum: %d\n", newCheckSum)
+
 				log.Print("Dropping packet: checksum failed")
 				continue
 			}
@@ -138,6 +166,7 @@ func (h *Host) ReadFromLinkLayer() {
 			if _, exists := h.LocalIFs[destAddr]; exists {
 				// This field should only be checked in the event that the packet has reached its destination
 				// call the appropriate handler function, otherwise packet is "dropped"
+				log.Printf("Protocol number: %d\n", packet.Header.Protocol)
 				if handler, exists := h.HandlerRegistry[packet.Header.Protocol]; exists {
 					handler.ReceivePacket(packet, h.RoutingTable)
 				} else {
@@ -168,9 +197,11 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 
 	// This is where the routing table is consulted
 	// hit routing table to find next hop address
+	log.Printf("Destination address: %d\n", destAddr)
+	log.Printf("Return from check route: %v\n", h.RoutingTable.CheckRoute(destAddr))
 	nextHop := h.RoutingTable.CheckRoute(destAddr).NextHop
 
-	// lookup nexth hop address in remote destination map to find our interface address
+	// lookup next hop address in remote destination map to find our interface address
 	if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
 		// lookup correct interface from the address to send this packet on
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
@@ -190,4 +221,5 @@ func (h *Host) StartHost() {
 
 	// start goroutine for read from link layer
 	go h.ReadFromLinkLayer()
+	go h.ReadFromHandler()
 }

@@ -1,10 +1,11 @@
 package pkg
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
+
+	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -49,7 +50,6 @@ func (c *LinkInterface) InitializeHostConnection() (err error) {
 		return
 	}
 	c.DestConnection = UDPConn
-	// defer the connection close after initialization
 
 	return
 }
@@ -67,9 +67,10 @@ func (c *LinkInterface) Listen() (err error) {
 			continue
 		}
 
+		log.Printf("UDP dest addr: %s\n", c.UDPDestAddr)
+		log.Printf("UDP dest port: %s\n", c.UDPDestPort)
 		// always listening for packets
 		buffer := make([]byte, MTU)
-		buf := bytes.NewReader(buffer)
 		numBytes, _, err := c.HostConnection.ReadFromUDP(buffer)
 		if err != nil {
 			fmt.Print(err)
@@ -80,9 +81,12 @@ func (c *LinkInterface) Listen() (err error) {
 
 		// deserialize into IPPacket to return
 		ipPacket := IPPacket{}
-		binary.Read(buf, binary.BigEndian, &ipPacket)
+		hdr, _ := ipv4.ParseHeader(buffer)
+		ipPacket.Header = *hdr
+		ipPacket.Data = buffer[hdr.Len:]
 
 		// send to network layer from link layer
+		// log.Printf("IP packet: %v", ipPacket)
 		c.IPPacketChannel <- ipPacket
 	}
 }
@@ -95,11 +99,17 @@ func (c *LinkInterface) Send(ip_packet IPPacket) (err error) {
 		return nil
 	}
 
-	bytesArray := &bytes.Buffer{}
+	// bytesArray := &bytes.Buffer{}
 
 	// serializng IP packet into array of bytes
-	binary.Write(bytesArray, binary.BigEndian, ip_packet)
-	c.DestConnection.Write(bytesArray.Bytes())
+	bytes, _ := ip_packet.Header.Marshal()
+	// binary.Write(bytesArray, binary.BigEndian, ip_packet.Header.)
+	// binary.Write(bytesArray, binary.BigEndian, ip_packet.Data)
+	bytes = append(bytes, ip_packet.Data...)
+
+	log.Printf("ip header: %v\n", ip_packet.Header)
+	log.Printf("Writing %d number of bytes to link layer\n", len(bytes))
+	c.DestConnection.Write(bytes)
 	return nil
 }
 
