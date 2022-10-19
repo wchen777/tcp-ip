@@ -109,7 +109,7 @@ func (h *Host) ReadFromHandler() {
 				// Create an IP packet here
 				packet := h.CreateIPPacket(src, dest, data)
 				// send to the link layer
-				h.SendToNeighbors(dest, packet)
+				go h.SendToNeighbors(dest, packet)
 			}
 		}
 	}

@@ -131,7 +131,7 @@ func main() {
 	scanner := bufio.NewScanner(f) // read from .lnx file:
 
 	var hostConn *net.UDPConn
-	defer hostConn.Close()
+	//defer hostConn.Close()
 
 	l := 0
 	for scanner.Scan() {

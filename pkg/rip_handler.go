@@ -49,7 +49,9 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 
 	// the next hop's destination address would be in the ip header
 	// i.e. neighbor's destination address
-	nextHop := binary.BigEndian.Uint32(packet.Header.Dst.To4())
+	// TODO: this should be correct as our immediate neighbors are the ones
+	//       sending a message to the node that is currently reading / handling this packet
+	nextHop := binary.BigEndian.Uint32(packet.Header.Src.To4())
 	updatedEntries := make([]RIPEntry, 0)
 
 	for _, newEntry := range ripEntry.Entries {
@@ -84,7 +86,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	go r.SendTriggeredUpdates(nextHop, updatedEntries, table)
 }
 
-// TODO: modularize getting all entries
 func (r *RipHandler) InitHandler(data interface{}) {
 	// send updates to all neighbors with entries from its routing table
 	var table *RoutingTable
