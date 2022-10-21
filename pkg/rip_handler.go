@@ -9,12 +9,14 @@ import (
 
 type RipHandler struct {
 	MessageChan chan []byte
+	Neighbors   []uint32
 }
 
 const (
 	UPDATE_FREQ = 5  // seconds
 	TIMEOUT     = 12 // seconds
 	INFINITY    = 16
+	MASK        = (1 << 32) - 1
 )
 
 func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
@@ -36,9 +38,8 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	binary.Read(packetDataBuf, binary.BigEndian, &ripEntry.Command)
 	binary.Read(packetDataBuf, binary.BigEndian, &ripEntry.NumEntries)
 
-	log.Printf("RIP message: %d\n", ripEntry.NumEntries)
-
 	// TODO: does casting here cause any issues?
+	// log.Printf("ENTRIES NUMBER: %d\n", ripEntry.NumEntries)
 	for i := 0; i < int(ripEntry.NumEntries); i++ {
 		entry := RIPEntry{}
 		binary.Read(packetDataBuf, binary.BigEndian, &entry.Cost)
@@ -57,7 +58,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	for _, newEntry := range ripEntry.Entries {
 		oldEntry := table.CheckRoute(newEntry.Address)
 		if oldEntry == nil {
-			log.Printf("Adding new entry: %v\n", newEntry)
 			// if D isn't in the table, add <D, C, N>
 			updateChan := make(chan bool, 1)
 			table.AddRoute(newEntry.Address, newEntry.Cost+1, nextHop, updateChan)
@@ -83,37 +83,57 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	}
 
 	// Send an update to neighbors the entries that have changed
-	go r.SendTriggeredUpdates(nextHop, updatedEntries, table)
+	go r.SendTriggeredUpdates(updatedEntries, table)
 }
 
-func (r *RipHandler) InitHandler(data interface{}) {
+func (r *RipHandler) InitHandler(data []interface{}) {
 	// send updates to all neighbors with entries from its routing table
+	if len(data) != 2 {
+		log.Print("Incorrect length of data, returning from init handler")
+		return
+	}
+
 	var table *RoutingTable
 
-	if val, ok := data.(*RoutingTable); ok {
+	if val, ok := data[0].(*RoutingTable); ok {
 		table = val
 	} else {
 		log.Print("Unable to create routing table from data")
 		return
 	}
 
-	entries := r.GetAllEntries(table)
-	numEntries := len(entries)
+	var neighborMap map[uint32]uint32
 
-	newRIPMessage := RIPMessage{}
-	newRIPMessage.Command = 1
-	newRIPMessage.NumEntries = uint16(numEntries)
-	newRIPMessage.Entries = entries
+	if val, ok := data[1].(*map[uint32]uint32); !ok {
+		log.Print("Unable to create list of neighbors from data")
+		return
+	} else {
+		neighborMap = *val
+	}
+	r.Neighbors = make([]uint32, 0)
+	for key := range neighborMap {
+		r.Neighbors = append(r.Neighbors, key)
+	}
+	// log.Printf("NEIGHBORS: %v\n", r.Neighbors)
 
-	bytesArray := &bytes.Buffer{}
-	binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
-	binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
-	binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
+	// for
+	// entries := r.GetAllEntries(table)
+	// numEntries := len(entries)
+
+	// newRIPMessage := RIPMessage{}
+	// newRIPMessage.Command = 1
+	// newRIPMessage.NumEntries = uint16(numEntries)
+	// newRIPMessage.Entries = entries
+
+	// bytesArray := &bytes.Buffer{}
+	// binary.Write(bytesArray, binary.BigEndian, )
+	// binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
+	// binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
+	// binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
 
 	// send to channel that is shared with the host
-	r.MessageChan <- bytesArray.Bytes()
-
-	go r.SendUpdates(table)
+	// r.MessageChan <- bytesArray.Bytes()
+	go r.SendUpdatesToNeighbors(table)
 }
 
 func (r *RipHandler) GetAllEntries(table *RoutingTable) []RIPEntry {
@@ -122,38 +142,68 @@ func (r *RipHandler) GetAllEntries(table *RoutingTable) []RIPEntry {
 	entries := make([]RIPEntry, 0)
 
 	for destination, entry := range table.Table {
-		ripEntry := RIPEntry{entry.Cost, destination, (1 << 32) - 1}
+		ripEntry := RIPEntry{entry.Cost, destination, MASK}
 		entries = append(entries, ripEntry)
 	}
 
 	return entries
 }
 
+func (r *RipHandler) GetSpecificEntries(table *RoutingTable, neighborToPoison uint32) []RIPEntry {
+	table.TableLock.Lock()
+	defer table.TableLock.Unlock()
+	entries := make([]RIPEntry, 0)
+
+	for destination, entry := range table.Table {
+		ripEntry := RIPEntry{}
+		ripEntry.Address = destination
+		ripEntry.Mask = MASK
+
+		if destination == neighborToPoison {
+			ripEntry.Cost = INFINITY
+		} else {
+			ripEntry.Cost = entry.Cost
+		}
+		// add entries to list
+		entries = append(entries, ripEntry)
+	}
+	return entries
+}
+
 // function that will periodically send updates to routing table
-func (r *RipHandler) SendUpdates(table *RoutingTable) {
+// this should be where poisoned updates happen
+func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 	timer := time.NewTicker(UPDATE_FREQ * time.Second)
 
 	for {
-
 		select {
 		case <-timer.C:
 			// send updates to all neighbors with entries from its routing table
-			entries := r.GetAllEntries(table)
-			numEntries := len(entries)
+			for _, neighbor := range r.Neighbors {
+				log.Print("here lol")
+				// get routing table entries specific to a particular neighbor
+				// the cost needs to be poisoned with INFINITY
 
-			newRIPMessage := RIPMessage{}
-			newRIPMessage.Command = 1
-			newRIPMessage.NumEntries = uint16(numEntries)
-			newRIPMessage.Entries = entries
+				// TODO: decide if the rest of this code here should be a go routine or not
+				entries := r.GetSpecificEntries(table, neighbor)
 
-			bytesArray := &bytes.Buffer{}
-			binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
-			binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
-			binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
+				numEntries := len(entries)
+				newRIPMessage := RIPMessage{}
+				newRIPMessage.Command = 1
+				newRIPMessage.NumEntries = uint16(numEntries)
+				newRIPMessage.Entries = entries
 
-			// send to channel that is shared with the host
-			log.Printf("Sending to host for updates\n")
-			r.MessageChan <- bytesArray.Bytes()
+				bytesArray := &bytes.Buffer{}
+				// the first four bytes should be the ip address of the neighbor
+				log.Printf("DESTINATION ADDR 1: %d\n", neighbor)
+				binary.Write(bytesArray, binary.BigEndian, neighbor)
+				binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
+				binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
+				binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
+
+				// send to channel that is shared with the host
+				r.MessageChan <- bytesArray.Bytes()
+			}
 		}
 	}
 }
@@ -161,30 +211,38 @@ func (r *RipHandler) SendUpdates(table *RoutingTable) {
 // should probably protect the routing table if it's shared by more than one go routine
 
 // This is for triggered updates upon updates to our routing table
-func (r *RipHandler) SendTriggeredUpdates(ReceivedFrom uint32, entriesToSend []RIPEntry, table *RoutingTable) {
+func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *RoutingTable) {
 	// iterate through the map and send to every entry including the nextHop / ReceivedFrom address,
 	// we should instead send INFINITY
-	for i, entry := range entriesToSend {
-		log.Printf("Adding new entry: %v\n", entry)
-		newEntry := table.CheckRoute(entry.Address)
-		if newEntry == nil {
-			log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
-		} else if newEntry.NextHop == ReceivedFrom {
-			entriesToSend[i].Cost = INFINITY
+	for _, neighbor := range r.Neighbors {
+		// log.Print("here lol 2")
+		// iterate through the immediate neighbors to send only the updates to routing table
+		for i, entry := range entriesToSend {
+			newEntry := table.CheckRoute(entry.Address)
+			if newEntry == nil {
+				// log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
+			} else if newEntry.NextHop == neighbor {
+				// if the new entry's next hop is the neighbor that
+				// we are sending the new updates to, then we should set the cost to be infinity
+				entriesToSend[i].Cost = INFINITY
+			}
 		}
+
+		// send to one neighbor
+		newRIPMessage := RIPMessage{}
+		newRIPMessage.Command = 1
+		newRIPMessage.NumEntries = uint16(len(entriesToSend))
+		newRIPMessage.Entries = entriesToSend
+
+		bytesArray := &bytes.Buffer{}
+
+		// first write the address
+		binary.Write(bytesArray, binary.BigEndian, neighbor)
+		binary.Write(bytesArray, binary.BigEndian, newRIPMessage)
+
+		// send to channel that is shared with the host
+		r.MessageChan <- bytesArray.Bytes()
 	}
-
-	// send to host
-	newRIPMessage := RIPMessage{}
-	newRIPMessage.Command = 1
-	newRIPMessage.NumEntries = uint16(len(entriesToSend))
-	newRIPMessage.Entries = entriesToSend
-
-	bytesArray := &bytes.Buffer{}
-	binary.Write(bytesArray, binary.BigEndian, newRIPMessage)
-
-	// send to channel that is shared with the host
-	r.MessageChan <- bytesArray.Bytes()
 }
 
 // called for each new entry that is created
@@ -197,12 +255,12 @@ func (r *RipHandler) waitForUpdates(newEntryAddress uint32, updateChan chan bool
 		case update := <-updateChan:
 			// handling the message
 			if update {
-				log.Printf("Updating the timeout")
+				// log.Printf("Updating the timeout")
 				timeout = time.After(time.Duration(TIMEOUT * time.Second))
 			}
 		case <-timeout:
 			// If we have reached the timeout case, then we should remove the entry and return
-			log.Printf("timeout: %d", newEntryAddress)
+			// log.Printf("timeout: %d", newEntryAddress)
 			table.RemoveRoute(newEntryAddress)
 			return
 		}

@@ -57,6 +57,18 @@ func (rt *RoutingTable) AddRoute(dest uint32, cost uint32, nextHop uint32, updat
 	}
 }
 
+func (rt *RoutingTable) RemoveNextHop(nextHop uint32) {
+	rt.TableLock.Lock()
+	defer rt.TableLock.Unlock()
+
+	for dest, entry := range rt.Table {
+		if entry.NextHop == nextHop {
+			delete(rt.Table, dest)
+		}
+	}
+
+}
+
 func (rt *RoutingTable) RemoveRoute(dest uint32) {
 	rt.TableLock.Lock()
 	defer rt.TableLock.Unlock()

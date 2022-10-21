@@ -36,17 +36,23 @@ func NewTestHandler() pkg.Handler {
 	return &pkg.TestHandler{}
 }
 
+// convert a uint32 ip addr to its string version
+func addrNumToIP(addr uint32) string {
+	return net.IPv4(byte(addr>>24), byte(addr>>16), byte(addr>>8), byte(addr)).String()
+}
+
 /*
 	Routine for printing out the active interfaces
 */
 func printInterfaces(h *pkg.Host) {
 	fmt.Printf("id  state  local  remote\n")
 	for addrLocalIF, localIF := range h.LocalIFs {
-		addrLocal := net.IPv4(byte(addrLocalIF>>24), byte(addrLocalIF>>16), byte(addrLocalIF>>8), byte(addrLocalIF)).String()
+		addrLocal := addrNumToIP(addrLocalIF)
+		addrRemote := addrNumToIP(localIF.DestIPAddress)
 		if localIF.Stopped {
-			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "down", addrLocal, localIF.UDPDestAddr)
+			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "down", addrLocal, addrRemote)
 		} else {
-			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "up", addrLocal, localIF.UDPDestAddr)
+			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "up", addrLocal, addrRemote)
 		}
 	}
 }
@@ -57,9 +63,9 @@ func printInterfaces(h *pkg.Host) {
 func printRoutingTable(h *pkg.Host) {
 	fmt.Printf("dest  next  cost\n")
 	for dest, entry := range h.RoutingTable.Table {
-		destAddr := net.IPv4(byte(dest>>24), byte(dest>>16), byte(dest>>8), byte(dest)).String()
+		destAddr := addrNumToIP(dest)
 		nextHop := entry.NextHop
-		nextHopAddr := net.IPv4(byte(nextHop>>24), byte(nextHop>>16), byte(nextHop>>8), byte(nextHop)).String()
+		nextHopAddr := addrNumToIP(nextHop)
 		fmt.Printf("%s  %s   %d\n", destAddr, nextHopAddr, entry.Cost)
 	}
 }
@@ -91,7 +97,13 @@ func sendCommand(h *pkg.Host, line string) {
 		return
 	}
 
-	h.SendPacket(destAddr, protocolNum, args[3])
+	err = h.SendPacket(destAddr, protocolNum, args[3])
+
+	if err != nil {
+		addrNum, _ := strconv.Atoi(err.Error())
+		addr := addrNumToIP(uint32(addrNum))
+		log.Print(fmt.Sprintf("cannot send to %s, it is an unreachable address", addr))
+	}
 }
 
 /*
@@ -183,6 +195,7 @@ func main() {
 				InterfaceNumber: l - 1,
 				HostConnection:  hostConn,
 				HostIPAddress:   hostIPAddr,
+				DestIPAddress:   neighborIPAddr,
 				UDPDestAddr:     line[0],
 				UDPDestPort:     line[1],
 				Stopped:         false,
@@ -205,12 +218,16 @@ func main() {
 	// register application handlers
 	ripHandler := NewRipHandler(host.MessageChannel)
 	testHandler := NewTestHandler()
+	testHandler.InitHandler(nil)
 
 	log.Print(host.RoutingTable.Table)
 	host.RegisterHandler(RIP_PROTOCOL, ripHandler) //
 	host.RegisterHandler(TEST_PROTOCOL, testHandler)
-	log.Printf("In node.go: %T\n", routingTable)
-	go ripHandler.InitHandler(routingTable)
+
+	dataForHandler := make([]interface{}, 0)
+	// sending both the routingTable and the RemoteDestinations as that contains the neighbors
+	dataForHandler = append(dataForHandler, routingTable, &host.RemoteDestination)
+	go ripHandler.InitHandler(dataForHandler)
 
 	// start listening for the host
 	host.StartHost()
@@ -229,6 +246,8 @@ func main() {
 		commands := strings.Split(line, " ")
 
 		switch commands[0] {
+		case "\n":
+			continue
 		case "interfaces":
 			// information about interfaces
 			printInterfaces(&host)
@@ -246,11 +265,34 @@ func main() {
 				log.Print("Invalid number of arguments for down")
 				break
 			}
+			ifNum, err := strconv.Atoi(commands[1])
+			if err != nil {
+				log.Print("Invalid input for interface number")
+				break
+			}
+			err = host.DownInterface(ifNum)
+
+			if err != nil {
+				log.Print(err.Error())
+			}
 		case "up":
 			if len(commands) < 2 {
 				log.Print("Invalid number of arguments for up")
 				break
 			}
+
+			ifNum, err := strconv.Atoi(commands[1])
+			if err != nil {
+				log.Print("Invalid input for interface number")
+				break
+			}
+
+			err = host.UpInterface(ifNum)
+
+			if err != nil {
+				log.Print(err.Error())
+			}
+
 		case "send":
 			if len(commands) < 4 {
 				log.Print("Invalid number of arguments for send")

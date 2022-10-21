@@ -2,7 +2,6 @@ package pkg
 
 import (
 	"fmt"
-	"log"
 	"net"
 
 	"golang.org/x/net/ipv4"
@@ -26,7 +25,8 @@ type LinkComm interface {
 
 type LinkInterface struct {
 	InterfaceNumber int
-	HostIPAddress   uint32
+	HostIPAddress   uint32 // this is us
+	DestIPAddress   uint32 // this is the addr of the neighbor connected to the interface
 
 	HostConnection  *net.UDPConn
 	DestConnection  *net.UDPConn // this connects from current interface to the immediate link connection interface
@@ -66,8 +66,6 @@ func (c *LinkInterface) Listen() (err error) {
 			continue
 		}
 
-		log.Printf("UDP dest addr: %s\n", c.UDPDestAddr)
-		log.Printf("UDP dest port: %s\n", c.UDPDestPort)
 		// always listening for packets
 		buffer := make([]byte, MTU)
 		numBytes, _, err := c.HostConnection.ReadFromUDP(buffer)
@@ -85,7 +83,6 @@ func (c *LinkInterface) Listen() (err error) {
 		ipPacket.Data = buffer[hdr.Len:]
 
 		// send to network layer from link layer
-		// log.Printf("IP packet: %v", ipPacket)
 		c.IPPacketChannel <- ipPacket
 	}
 }
@@ -93,23 +90,17 @@ func (c *LinkInterface) Listen() (err error) {
 /*
 	send an ip packet through the link layer to a destination interface
 */
-func (c *LinkInterface) Send(ip_packet IPPacket) (err error) {
+func (c *LinkInterface) Send(ip_packet IPPacket) {
 	if c.Stopped {
-		return nil
+		return
 	}
-
-	// bytesArray := &bytes.Buffer{}
 
 	// serializng IP packet into array of bytes
 	bytes, _ := ip_packet.Header.Marshal()
-	// binary.Write(bytesArray, binary.BigEndian, ip_packet.Header.)
-	// binary.Write(bytesArray, binary.BigEndian, ip_packet.Data)
 	bytes = append(bytes, ip_packet.Data...)
 
-	log.Printf("ip header: %v\n", ip_packet.Header)
-	log.Printf("Writing %d number of bytes to link layer\n", len(bytes))
 	c.DestConnection.Write(bytes)
-	return nil
+	return
 }
 
 /*

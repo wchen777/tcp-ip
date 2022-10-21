@@ -2,6 +2,8 @@ package pkg
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"log"
 	"net"
 
@@ -21,7 +23,8 @@ type Host struct {
 }
 
 const (
-	IPV6 = 6
+	IPV6      = 6
+	ADDR_SIZE = 4
 )
 
 func computeChecksum(packet IPPacket) (uint16, error) {
@@ -47,9 +50,16 @@ func (h *Host) InitHost() {
 /*
 	general send function for the command in the driver
 */
-func (h *Host) SendPacket(destAddr uint32, protocol int, data string) {
+func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
 	// determine the next hop
-	nextHop := h.RoutingTable.CheckRoute(destAddr).NextHop
+	entry := h.RoutingTable.CheckRoute(destAddr)
+
+	if entry == nil {
+		// TODO: fix for later
+		return errors.New("Entry doesn't exist")
+	}
+
+	nextHop := entry.NextHop
 
 	// lookup next hop address in remote destination map to find our interface address
 	if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
@@ -60,6 +70,8 @@ func (h *Host) SendPacket(destAddr uint32, protocol int, data string) {
 			localInterface.Send(packet)
 		}
 	}
+
+	return nil
 }
 
 /*
@@ -69,13 +81,15 @@ func (h *Host) RegisterHandler(protocolNum int, handler Handler) {
 	h.HandlerRegistry[protocolNum] = handler
 }
 
-func (h *Host) SendToNeighbors(dest uint32, packet IPPacket) {
+func (h *Host) SendToNeighbor(dest uint32, packet IPPacket) {
 
 	newCheckSum, err := computeChecksum(packet)
+
 	if err != nil {
 		log.Print(err)
 		return
 	}
+
 	packet.Header.Checksum = int(newCheckSum)
 
 	// lookup next hop address in remote destination map to find our interface address
@@ -96,21 +110,21 @@ func (h *Host) ReadFromHandler() {
 	for {
 		select {
 		case data := <-h.MessageChannel:
-			//log.Printf("data received here: %v\n", data)
-
+			// if we receive a message from the channel, try and forward/send it to the correct interface
 			if len(data) == 0 { // check for empty data
 				break
 			}
 
-			// if we receive a message from the channel
-			// send to all the neighbors
-			// by using the remote destination map
-			for dest, src := range h.RemoteDestination {
-				// Create an IP packet here
-				packet := h.CreateIPPacket(src, dest, data)
-				// send to the link layer
-				go h.SendToNeighbors(dest, packet)
-			}
+			// get dest and src addr for the message
+			destAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
+			log.Printf("DESTINATION ADDR 2: %d\n", destAddr)
+			srcAddr := h.RemoteDestination[destAddr]
+
+			// Create an IP packet here
+			packet := h.CreateIPPacket(srcAddr, destAddr, data[ADDR_SIZE:])
+
+			// send to the link layer on the correct interface
+			go h.SendToNeighbor(destAddr, packet)
 		}
 	}
 }
@@ -178,7 +192,6 @@ func (h *Host) ReadFromLinkLayer() {
 			if _, exists := h.LocalIFs[destAddr]; exists {
 				// This field should only be checked in the event that the packet has reached its destination
 				// call the appropriate handler function, otherwise packet is "dropped"
-				log.Printf("Protocol number: %d\n", packet.Header.Protocol)
 				if handler, exists := h.HandlerRegistry[packet.Header.Protocol]; exists {
 					go handler.ReceivePacket(packet, h.RoutingTable)
 				} else {
@@ -218,6 +231,47 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 			localInterface.Send(packet)
 		}
 	}
+}
+
+// functions to down a specific hosts interface
+func (h *Host) DownInterface(interfaceNum int) error {
+
+	for _, interf := range h.LocalIFs {
+		if interf.InterfaceNumber == interfaceNum {
+
+			if interf.Stopped {
+				return errors.New(fmt.Sprintf("interface %d is already down", interfaceNum))
+			}
+
+			interf.Disable()
+
+			// update the routing table
+			// get the immediate neighbor for this interface,
+			// i.e. the receiver on this link
+			neighbor := interf.DestIPAddress
+			h.RoutingTable.RemoveNextHop(neighbor)
+			return nil
+		}
+	}
+
+	return errors.New("could not find interface associated with this number")
+}
+
+// functions to up a specific host interface
+func (h *Host) UpInterface(interfaceNum int) error {
+	for _, interf := range h.LocalIFs {
+		if interf.InterfaceNumber == interfaceNum {
+			if !interf.Stopped {
+				return errors.New(fmt.Sprintf("interface %d is already up", interfaceNum))
+			}
+			interf.Enable()
+
+			// update the routing table with ourself first
+			// the periodic updates function should propogate this entry
+			h.RoutingTable.Table[interf.HostIPAddress] = h.RoutingTable.CreateEntry(interf.HostIPAddress, 0)
+		}
+	}
+	return nil
 }
 
 /*
