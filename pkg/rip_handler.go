@@ -20,7 +20,7 @@ const (
 )
 
 func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
-	log.Print("Reached RIP handler...")
+	// log.Print("Reached RIP handler...")
 
 	var table *RoutingTable
 
@@ -58,6 +58,7 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	for _, newEntry := range ripEntry.Entries {
 		oldEntry := table.CheckRoute(newEntry.Address)
 		if oldEntry == nil {
+			log.Print("creating entry in here")
 			// if D isn't in the table, add <D, C, N>
 			updateChan := make(chan bool, 1)
 			table.AddRoute(newEntry.Address, newEntry.Cost+1, nextHop, updateChan)
@@ -71,6 +72,7 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 
 			// If existing entry <D, C_old, M>
 			if newEntry.Cost+1 < oldEntry.Cost || newEntry.Cost+1 > oldEntry.Cost && oldEntry.NextHop == nextHop {
+				log.Print("updating existing entry")
 				// if C < C_old, update table <D, C, N> --> found better route
 				// if C > C_old and N == M, update table <D, C, M> --> increased cost
 				table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
@@ -83,7 +85,9 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	}
 
 	// Send an update to neighbors the entries that have changed
-	go r.SendTriggeredUpdates(updatedEntries, table)
+	if len(updatedEntries) > 0 {
+		go r.SendTriggeredUpdates(updatedEntries, table)
+	}
 }
 
 func (r *RipHandler) InitHandler(data []interface{}) {
@@ -180,7 +184,7 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 		case <-timer.C:
 			// send updates to all neighbors with entries from its routing table
 			for _, neighbor := range r.Neighbors {
-				log.Print("here lol")
+				// log.Print("here lol")
 				// get routing table entries specific to a particular neighbor
 				// the cost needs to be poisoned with INFINITY
 
@@ -195,7 +199,7 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 
 				bytesArray := &bytes.Buffer{}
 				// the first four bytes should be the ip address of the neighbor
-				log.Printf("DESTINATION ADDR 1: %d\n", neighbor)
+				// log.Printf("DESTINATION ADDR 1: %d\n", neighbor)
 				binary.Write(bytesArray, binary.BigEndian, neighbor)
 				binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
 				binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
@@ -243,6 +247,8 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 		// send to channel that is shared with the host
 		r.MessageChan <- bytesArray.Bytes()
 	}
+	log.Print("returning here")
+	return
 }
 
 // called for each new entry that is created

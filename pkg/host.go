@@ -117,7 +117,7 @@ func (h *Host) ReadFromHandler() {
 
 			// get dest and src addr for the message
 			destAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
-			log.Printf("DESTINATION ADDR 2: %d\n", destAddr)
+			// log.Printf("DESTINATION ADDR 2: %d\n", destAddr)
 			srcAddr := h.RemoteDestination[destAddr]
 
 			// Create an IP packet here

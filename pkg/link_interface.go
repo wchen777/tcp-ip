@@ -68,13 +68,13 @@ func (c *LinkInterface) Listen() (err error) {
 
 		// always listening for packets
 		buffer := make([]byte, MTU)
-		numBytes, _, err := c.HostConnection.ReadFromUDP(buffer)
+		_, _, err := c.HostConnection.ReadFromUDP(buffer)
 		if err != nil {
 			fmt.Print(err)
 			return err
 		}
 
-		fmt.Printf("Number of bytes read from link layer connection: %d\n", numBytes)
+		// fmt.Printf("Number of bytes read from link layer connection: %d\n", numBytes)
 
 		// deserialize into IPPacket to return
 		ipPacket := IPPacket{}
