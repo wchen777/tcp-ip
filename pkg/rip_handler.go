@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"log"
+	"net"
 	"time"
 )
 
@@ -70,6 +71,9 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 			// C_old --> the cost
 			// M --> the neighbor / next hop
 
+			// if C == C_old, just refresh timer --> nothing new
+			oldEntry.UpdateChan <- true
+
 			// If existing entry <D, C_old, M>
 			if newEntry.Cost+1 < oldEntry.Cost || newEntry.Cost+1 > oldEntry.Cost && oldEntry.NextHop == nextHop {
 				log.Print("updating existing entry")
@@ -78,9 +82,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 				table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
 				updatedEntries = append(updatedEntries, newEntry)
 			}
-
-			// if C == C_old, just refresh timer --> nothing new
-			oldEntry.UpdateChan <- true
 		}
 	}
 
@@ -120,23 +121,25 @@ func (r *RipHandler) InitHandler(data []interface{}) {
 	}
 	// log.Printf("NEIGHBORS: %v\n", r.Neighbors)
 
-	// for
-	// entries := r.GetAllEntries(table)
-	// numEntries := len(entries)
+	for _, neighbor := range r.Neighbors {
+		entries := r.GetAllEntries(table)
+		numEntries := len(entries)
 
-	// newRIPMessage := RIPMessage{}
-	// newRIPMessage.Command = 1
-	// newRIPMessage.NumEntries = uint16(numEntries)
-	// newRIPMessage.Entries = entries
+		newRIPMessage := RIPMessage{}
+		newRIPMessage.Command = 1
+		newRIPMessage.NumEntries = uint16(numEntries)
+		newRIPMessage.Entries = entries
 
-	// bytesArray := &bytes.Buffer{}
-	// binary.Write(bytesArray, binary.BigEndian, )
-	// binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
-	// binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
-	// binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
+		bytesArray := &bytes.Buffer{}
+		binary.Write(bytesArray, binary.BigEndian, neighbor)
+		binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
+		binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
+		binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
 
-	// send to channel that is shared with the host
-	// r.MessageChan <- bytesArray.Bytes()
+		// send to channel that is shared with the host
+		r.MessageChan <- bytesArray.Bytes()
+	}
+
 	go r.SendUpdatesToNeighbors(table)
 }
 
@@ -163,7 +166,7 @@ func (r *RipHandler) GetSpecificEntries(table *RoutingTable, neighborToPoison ui
 		ripEntry.Address = destination
 		ripEntry.Mask = MASK
 
-		if destination == neighborToPoison {
+		if entry.NextHop == neighborToPoison {
 			ripEntry.Cost = INFINITY
 		} else {
 			ripEntry.Cost = entry.Cost
@@ -182,12 +185,13 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 	for {
 		select {
 		case <-timer.C:
+			log.Print("Sending updates to neighbors now")
 			// send updates to all neighbors with entries from its routing table
 			for _, neighbor := range r.Neighbors {
 				// log.Print("here lol")
 				// get routing table entries specific to a particular neighbor
 				// the cost needs to be poisoned with INFINITY
-
+				// log.Printf("new entry address: %s\n", net.IPv4(byte(neighbor>>24), byte(neighbor>>16), byte(neighbor>>8), byte(neighbor)).String())
 				// TODO: decide if the rest of this code here should be a go routine or not
 				entries := r.GetSpecificEntries(table, neighbor)
 
@@ -224,7 +228,7 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 		for i, entry := range entriesToSend {
 			newEntry := table.CheckRoute(entry.Address)
 			if newEntry == nil {
-				// log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
+				log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
 			} else if newEntry.NextHop == neighbor {
 				// if the new entry's next hop is the neighbor that
 				// we are sending the new updates to, then we should set the cost to be infinity
@@ -255,20 +259,23 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 // works with two channels: timeout channel which waits for 12 seconds
 func (r *RipHandler) waitForUpdates(newEntryAddress uint32, updateChan chan bool, table *RoutingTable) {
 
-	timeout := time.After(time.Duration(TIMEOUT * time.Second))
+	timeout := time.After(time.Duration(20 * time.Second))
 	for {
 		select {
 		case update := <-updateChan:
 			// handling the message
 			if update {
 				// log.Printf("Updating the timeout")
-				timeout = time.After(time.Duration(TIMEOUT * time.Second))
+				timeout = time.After(time.Duration(20 * time.Second))
 			}
 		case <-timeout:
 			// If we have reached the timeout case, then we should remove the entry and return
-			// log.Printf("timeout: %d", newEntryAddress)
+			log.Printf("timeout: %d", newEntryAddress)
+			log.Printf("new entry address: %s\n", net.IPv4(byte(newEntryAddress>>24), byte(newEntryAddress>>16), byte(newEntryAddress>>8), byte(newEntryAddress)).String())
 			table.RemoveRoute(newEntryAddress)
 			return
+		default:
+			continue
 		}
 	}
 }

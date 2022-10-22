@@ -229,7 +229,11 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 		// lookup correct interface from the address to send this packet on
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
 			localInterface.Send(packet)
+		} else {
+			log.Printf("interface doesn't exist here to forward")
 		}
+	} else {
+		log.Printf("next hop doesn't exist to forward")
 	}
 }
 
