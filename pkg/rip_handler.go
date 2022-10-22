@@ -163,7 +163,7 @@ func (r *RipHandler) GetSpecificEntries(table *RoutingTable, neighborToPoison ui
 		ripEntry.Address = destination
 		ripEntry.Mask = MASK
 
-		if destination == neighborToPoison {
+		if entry.NextHop == neighborToPoison {
 			ripEntry.Cost = INFINITY
 		} else {
 			ripEntry.Cost = entry.Cost
