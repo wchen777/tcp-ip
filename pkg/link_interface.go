@@ -92,6 +92,7 @@ func (c *LinkInterface) Listen() (err error) {
 */
 func (c *LinkInterface) Send(ip_packet IPPacket) {
 	if c.Stopped {
+		fmt.Println("blocked sending")
 		return
 	}
 

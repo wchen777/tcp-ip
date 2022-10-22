@@ -19,7 +19,7 @@ type RoutingTable struct {
 }
 
 func (rt *RoutingTable) CreateEntry(nextHop uint32, cost uint32) *RoutingTableEntry {
-	return &RoutingTableEntry{NextHop: nextHop, Cost: cost, UpdateChan: make(chan bool, 1)}
+	return &RoutingTableEntry{NextHop: nextHop, Cost: cost, UpdateChan: make(chan bool)}
 }
 
 // CheckRoute function --> gets the entry from the table when routing IP packets

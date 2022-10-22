@@ -114,7 +114,7 @@ func (h *Host) ReadFromHandler() {
 			if len(data) == 0 { // check for empty data
 				break
 			}
-
+			// log.Print("Received data from rip handler channel")
 			// get dest and src addr for the message
 			destAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
 			// log.Printf("DESTINATION ADDR 2: %d\n", destAddr)
@@ -173,7 +173,9 @@ func (h *Host) ReadFromLinkLayer() {
 				continue
 			}
 
-			if newCheckSum != uint16(checkSum) {
+			if int(newCheckSum) != checkSum {
+				log.Printf("original check sum: %d\n", checkSum)
+				log.Printf("new check sum: %d\n", newCheckSum)
 				log.Print("Dropping packet: checksum failed")
 				continue
 			}
@@ -250,6 +252,7 @@ func (h *Host) DownInterface(interfaceNum int) error {
 			// i.e. the receiver on this link
 			neighbor := interf.DestIPAddress
 			h.RoutingTable.RemoveNextHop(neighbor)
+			log.Printf("interface %d is now down", interfaceNum)
 			return nil
 		}
 	}
@@ -269,9 +272,11 @@ func (h *Host) UpInterface(interfaceNum int) error {
 			// update the routing table with ourself first
 			// the periodic updates function should propogate this entry
 			h.RoutingTable.Table[interf.HostIPAddress] = h.RoutingTable.CreateEntry(interf.HostIPAddress, 0)
+			log.Printf("interface %d is back up", interfaceNum)
+			return nil
 		}
 	}
-	return nil
+	return errors.New("could not find interface associated with this number")
 }
 
 /*

@@ -45,7 +45,7 @@ func addrNumToIP(addr uint32) string {
 	Routine for printing out the active interfaces
 */
 func printInterfaces(h *pkg.Host) {
-	fmt.Printf("id  state  local  remote\n")
+	fmt.Printf("id\t  state\t  local\t  remote\n")
 	for addrLocalIF, localIF := range h.LocalIFs {
 		addrLocal := addrNumToIP(addrLocalIF)
 		addrRemote := addrNumToIP(localIF.DestIPAddress)
@@ -61,7 +61,7 @@ func printInterfaces(h *pkg.Host) {
 	Routine for printing out the routing table
 */
 func printRoutingTable(h *pkg.Host) {
-	fmt.Printf("dest  next  cost\n")
+	fmt.Printf("dest\t  next\t  cost\n")
 	for dest, entry := range h.RoutingTable.Table {
 		destAddr := addrNumToIP(dest)
 		nextHop := entry.NextHop
@@ -226,7 +226,8 @@ func main() {
 
 	dataForHandler := make([]interface{}, 0)
 	// sending both the routingTable and the RemoteDestinations as that contains the neighbors
-	dataForHandler = append(dataForHandler, routingTable, &host.RemoteDestination)
+	// TODO: temp solution
+	dataForHandler = append(dataForHandler, routingTable, &host.RemoteDestination, host.LocalIFs)
 	go ripHandler.InitHandler(dataForHandler)
 
 	// start listening for the host
