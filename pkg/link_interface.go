@@ -2,7 +2,6 @@ package pkg
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
 
@@ -104,13 +103,7 @@ func (c *LinkInterface) Send(ip_packet IPPacket) {
 	bytes, _ := ip_packet.Header.Marshal()
 	bytes = append(bytes, ip_packet.Data...)
 
-	bytesRead, err := c.DestConnection.Write(bytes)
-
-	if err != nil {
-		log.Printf("Host IP Address: %d\n", c.HostIPAddress)
-		log.Printf("Dest IP address: %d\n", c.DestIPAddress)
-		log.Printf("error in send: bytes read %d, error: %s", bytesRead, err.Error())
-	}
+	_, _ = c.DestConnection.Write(bytes)
 
 	return
 }

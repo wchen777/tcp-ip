@@ -88,11 +88,14 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 				log.Printf("old next hop: %d\n", oldEntry.NextHop)
 				// if C < C_old, update table <D, C, N> --> found better route
 				// if C > C_old and N == M, update table <D, C, M> --> increased cost
-				if newEntry.Cost == INFINITY {
-					table.UpdateRoute(newEntry.Address, newEntry.Cost, nextHop)
-				} else {
-					table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
-				}
+
+				// TODO: make sure that this check is no longer necessary
+				// if newEntry.Cost == INFINITY {
+				// 	table.UpdateRoute(newEntry.Address, newEntry.Cost, nextHop)
+				// } else {
+				// 	table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
+				// }
+				table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
 				updatedEntries = append(updatedEntries, newEntry)
 			} else if (newEntry.Cost+1 > oldEntry.Cost) && oldEntry.NextHop != nextHop {
 				// do not send an update if this is the case
@@ -181,6 +184,12 @@ func (r *RipHandler) GetAllEntries(table *RoutingTable) []RIPEntry {
 	entries := make([]RIPEntry, 0)
 
 	for destination, entry := range table.Table {
+		if entry.Cost == INFINITY {
+			// don't want to forward entries that have a cost of 16
+			// TODO: is it necessary to include this check here? don't think at start up we should have any 16 entries
+			log.Printf("not including this destination entry: %d\n", destination)
+			continue
+		}
 		ripEntry := RIPEntry{entry.Cost, destination, MASK}
 		entries = append(entries, ripEntry)
 	}
@@ -194,6 +203,10 @@ func (r *RipHandler) GetSpecificEntries(table *RoutingTable, neighborToPoison ui
 	entries := make([]RIPEntry, 0)
 
 	for destination, entry := range table.Table {
+		if entry.Cost == INFINITY {
+			// don't want to include an entry as this means it's effectively deleted
+			continue
+		}
 		ripEntry := RIPEntry{}
 		ripEntry.Address = destination
 		ripEntry.Mask = MASK
@@ -256,6 +269,11 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 		// iterate through the immediate neighbors to send only the updates to routing table
 		for i, entry := range entriesToSend {
 			newEntry := table.CheckRoute(entry.Address)
+			if newEntry.Cost == INFINITY {
+				// TODO: is this check necessary?
+				//       this also shouldn't be able to happen
+				continue
+			}
 			if newEntry == nil {
 				// log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
 			} else if newEntry.NextHop == neighbor {
