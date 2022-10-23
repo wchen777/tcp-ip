@@ -269,11 +269,11 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 		// iterate through the immediate neighbors to send only the updates to routing table
 		for i, entry := range entriesToSend {
 			newEntry := table.CheckRoute(entry.Address)
-			if newEntry.Cost == INFINITY {
-				// TODO: is this check necessary?
-				//       this also shouldn't be able to happen
-				continue
-			}
+			// if newEntry.Cost == INFINITY {
+			// 	// TODO: is this check necessary?
+			// 	//       this also shouldn't be able to happen
+			// 	continue
+			// }
 			if newEntry == nil {
 				// log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
 			} else if newEntry.NextHop == neighbor {
