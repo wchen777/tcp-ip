@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sync"
 
@@ -80,13 +81,14 @@ func (c *LinkInterface) Listen() (err error) {
 		ipPacket.Data = buffer[hdr.Len:bytesRead]
 
 		// send to network layer from link layer
-		c.StoppedLock.Lock()
-		if !c.Stopped {
-			c.StoppedLock.Unlock()
-			c.IPPacketChannel <- ipPacket
-		} else {
-			c.StoppedLock.Unlock()
-		}
+		// c.StoppedLock.Lock()
+		// if !c.Stopped {
+		// c.StoppedLock.Unlock()
+		c.IPPacketChannel <- ipPacket
+		// } else {
+		// 	log.Print("stopped is true on this interface")
+		// 	c.StoppedLock.Unlock()
+		// }
 	}
 }
 
@@ -94,10 +96,13 @@ func (c *LinkInterface) Listen() (err error) {
 	send an ip packet through the link layer to a destination interface
 */
 func (c *LinkInterface) Send(ip_packet IPPacket) {
+	c.StoppedLock.Lock()
 	if c.Stopped {
-		fmt.Println("blocked sending")
+		c.StoppedLock.Unlock()
+		log.Printf("blocked sending for this addr: %d\n", c.HostIPAddress)
 		return
 	}
+	c.StoppedLock.Unlock()
 
 	// serializng IP packet into array of bytes
 	bytes, _ := ip_packet.Header.Marshal()

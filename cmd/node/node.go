@@ -125,6 +125,18 @@ func quit(h *pkg.Host) {
 	os.Exit(0)
 }
 
+/*
+	traceroute commmand to print out the shortest route
+*/
+func traceroute(h *pkg.Host, destAddr string) {
+	destIPAddr := net.ParseIP(destAddr)
+	if destIPAddr == nil {
+		log.Print("The destination address is invalid")
+		return
+	}
+
+}
+
 // where everything should be initialized
 func main() {
 
@@ -326,6 +338,12 @@ func main() {
 				break
 			}
 			quit(&host)
+		case "traceroute":
+			if len(commands) != 2 {
+				log.Print("Invalid number of arguments for traceroute")
+				break
+			}
+
 		default:
 			printHelp(w)
 			w.Flush()

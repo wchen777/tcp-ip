@@ -60,7 +60,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	for _, newEntry := range ripEntry.Entries {
 		oldEntry := table.CheckRoute(newEntry.Address)
 		if oldEntry == nil {
-			log.Print("creating entry in here")
 			// if D isn't in the table, add <D, C, N>
 			updateChan := make(chan bool)
 			table.AddRoute(newEntry.Address, newEntry.Cost+1, nextHop, updateChan)
@@ -270,11 +269,11 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 		// iterate through the immediate neighbors to send only the updates to routing table
 		for i, entry := range entriesToSend {
 			newEntry := table.CheckRoute(entry.Address)
-			if newEntry.Cost == INFINITY {
-				// TODO: is this check necessary?
-				//       this also shouldn't be able to happen
-				continue
-			}
+			// if newEntry.Cost == INFINITY {
+			// 	// TODO: is this check necessary?
+			// 	//       this also shouldn't be able to happen
+			// 	continue
+			// }
 			if newEntry == nil {
 				log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
 			} else if newEntry.NextHop == neighbor {

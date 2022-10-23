@@ -224,6 +224,7 @@ func (h *Host) ReadFromLinkLayer() {
 				// call the appropriate handler function, otherwise packet is "dropped"
 				localInterface.StoppedLock.Lock()
 				if localInterface.Stopped {
+					log.Printf("this local interface is stopped: %d\n", localInterface.HostIPAddress)
 					localInterface.StoppedLock.Unlock()
 					continue
 				} else {
