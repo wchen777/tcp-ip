@@ -114,6 +114,12 @@ func (h *Host) SendToNeighbor(dest uint32, packet IPPacket) {
 
 	packet.Header.Checksum = int(newCheckSum)
 
+	// entry := h.RoutingTable.CheckRoute(dest)
+	// if entry != nil && entry.Cost == INFINITY {
+	// 	log.Print("Unable to reach destination because of cost infinity")
+	// 	return
+	// }
+
 	// lookup next hop address in remote destination map to find our interface address
 	if addrOfInterface, exists := h.RemoteDestination[dest]; exists {
 		// lookup correct interface from the address to send this packet on
@@ -213,9 +219,17 @@ func (h *Host) ReadFromLinkLayer() {
 			// And if all the above conditions are false, then sent to next hop.
 			// And if the next hop doesn't exist, the packet is dropped.
 			destAddr := binary.BigEndian.Uint32(packet.Header.Dst.To4())
-			if _, exists := h.LocalIFs[destAddr]; exists { // REACHED ITS DESTINATION -- FOR US
+			if localInterface, exists := h.LocalIFs[destAddr]; exists { // REACHED ITS DESTINATION -- FOR US
 				// This field should only be checked in the event that the packet has reached its destination
 				// call the appropriate handler function, otherwise packet is "dropped"
+				localInterface.StoppedLock.Lock()
+				if localInterface.Stopped {
+					localInterface.StoppedLock.Unlock()
+					continue
+				} else {
+					localInterface.StoppedLock.Unlock()
+				}
+
 				if handler, exists := h.HandlerRegistry[packet.Header.Protocol]; exists {
 					go handler.ReceivePacket(packet, h.RoutingTable)
 				} else {
@@ -275,9 +289,9 @@ func (h *Host) DownInterface(interfaceNum int) error {
 			interf.Disable()
 
 			// update the routing table
-			// get the immediate neighbor for this interface,
-			// i.e. the receiver on this link
-			h.RoutingTable.RemoveNextHop(interf.HostIPAddress)
+			// remove any entry that should go through the this interface
+			neighbor := interf.DestIPAddress
+			h.RoutingTable.RemoveNextHops([]uint32{interf.HostIPAddress, neighbor})
 			log.Printf("interface %d is now down", interfaceNum)
 			return nil
 		}
@@ -297,7 +311,10 @@ func (h *Host) UpInterface(interfaceNum int) error {
 
 			// update the routing table with ourself first
 			// the periodic updates function should propogate this entry
+			h.RoutingTable.TableLock.Lock()
 			h.RoutingTable.Table[interf.HostIPAddress] = h.RoutingTable.CreateEntry(interf.HostIPAddress, 0)
+			h.RoutingTable.TableLock.Unlock()
+
 			log.Printf("interface %d is back up", interfaceNum)
 			return nil
 		}

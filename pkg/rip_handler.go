@@ -57,8 +57,8 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	nextHop := binary.BigEndian.Uint32(packet.Header.Src.To4())
 	updatedEntries := make([]RIPEntry, 0)
 
+	log.Printf("RECEIVING STUFF FROM NEXT HOP: %d\n", nextHop)
 	for _, newEntry := range ripEntry.Entries {
-		// log.Printf("Entry address: %d\n", newEntry.Address)
 		oldEntry := table.CheckRoute(newEntry.Address)
 		if oldEntry == nil {
 			log.Print("creating entry in here")
@@ -97,6 +97,7 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 				updatedEntries = append(updatedEntries, newEntry)
 			} else if (newEntry.Cost+1 > oldEntry.Cost) && oldEntry.NextHop != nextHop {
 				// do not send an update if this is the case
+				// log.Printf("Not updating and continuing: %d\n", newEntry.Address)
 				continue
 			}
 			// if C == C_old, just refresh timer --> nothing new
@@ -304,7 +305,7 @@ func (r *RipHandler) waitForUpdates(newEntryAddress uint32, nextHop uint32, upda
 			// TODO: this is where we add triggered updates
 			// deleteEntry := []RIPEntry{{Cost: INFINITY, Address: newEntryAddress, Mask: MASK}}
 			// go r.SendTriggeredUpdates(deleteEntry, table)
-			return
+			timeout = time.After(time.Duration(TIMEOUT * time.Second))
 		}
 	}
 }

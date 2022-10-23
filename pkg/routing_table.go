@@ -58,18 +58,19 @@ func (rt *RoutingTable) AddRoute(dest uint32, cost uint32, nextHop uint32, updat
 	}
 }
 
-func (rt *RoutingTable) RemoveNextHop(nextHop uint32) {
+func (rt *RoutingTable) RemoveNextHops(nextHops []uint32) {
 	rt.TableLock.Lock()
 	defer rt.TableLock.Unlock()
 	log.Print("pls be here")
 
 	for dest, entry := range rt.Table {
-		if entry.NextHop == nextHop {
-			log.Print("we got here!")
-			rt.Table[dest].Cost = INFINITY
+		for _, nh := range nextHops {
+			if nh == entry.NextHop {
+				log.Print("we got here!")
+				rt.Table[dest].Cost = INFINITY
+			}
 		}
 	}
-
 }
 
 func (rt *RoutingTable) RemoveRoute(dest uint32) {
