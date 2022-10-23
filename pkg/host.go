@@ -32,11 +32,12 @@ func computeChecksum(packet IPPacket) (uint16, error) {
 	packet.Header.Checksum = 0
 	headerBytes, err := packet.Header.Marshal()
 	if err != nil {
+		// TODO: make sure that we are error checking the return value
 		log.Print("Dropping packet because marshalling packet failed")
 		return 0, err
 	}
 
-	return header.Checksum(headerBytes, 0), nil
+	return header.Checksum(headerBytes, 0) ^ 0xffff, nil
 }
 
 func (h *Host) InitHost() {
@@ -66,7 +67,11 @@ func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
 		// lookup correct interface from the address to send this packet on
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
 			// create the packet and send to link layer
-			packet := h.CreateIPPacket(addrOfInterface, destAddr, []byte(data))
+			packet := h.CreateIPPacket(addrOfInterface, destAddr, []byte(data), 0)
+
+			// make sure we are computing the checksum in this case too
+			checkSum, _ := computeChecksum(packet)
+			packet.Header.Checksum = int(checkSum)
 			localInterface.Send(packet)
 		}
 	}
@@ -121,7 +126,7 @@ func (h *Host) ReadFromHandler() {
 			srcAddr := h.RemoteDestination[destAddr]
 
 			// Create an IP packet here
-			packet := h.CreateIPPacket(srcAddr, destAddr, data[ADDR_SIZE:])
+			packet := h.CreateIPPacket(srcAddr, destAddr, data[ADDR_SIZE:], 200)
 
 			// send to the link layer on the correct interface
 			go h.SendToNeighbor(destAddr, packet)
@@ -129,7 +134,7 @@ func (h *Host) ReadFromHandler() {
 	}
 }
 
-func (h *Host) CreateIPPacket(src uint32, dest uint32, data []byte) IPPacket {
+func (h *Host) CreateIPPacket(src uint32, dest uint32, data []byte, protocol int) IPPacket {
 	srcAddress := net.IPv4(byte(src>>24), byte(src>>16), byte(src>>8), byte(src))
 	destAddress := net.IPv4(byte(dest>>24), byte(dest>>16), byte(dest>>8), byte(dest))
 
@@ -142,8 +147,8 @@ func (h *Host) CreateIPPacket(src uint32, dest uint32, data []byte) IPPacket {
 		Flags:    0,
 		FragOff:  0,
 		TTL:      32,
-		Protocol: 200,
-		Checksum: 0, // checksum will be computed in send link layer
+		Protocol: protocol, // no longer hardcoded
+		Checksum: 0,        // checksum will be computed in send link layer
 		Src:      srcAddress,
 		Dst:      destAddress,
 		Options:  []byte{},

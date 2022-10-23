@@ -21,19 +21,22 @@ type TestHandler struct {
 }
 
 func (t *TestHandler) ReceivePacket(packet IPPacket, data interface{}) {
+	fmt.Println()
 	fmt.Println("---Node received packet!---")
 	fmt.Fprintf(t.w, "source IP \t %s\n", packet.Header.Src.String())
 	fmt.Fprintf(t.w, "destination IP \t %s\n", packet.Header.Dst.String())
 	fmt.Fprintf(t.w, "protocol \t %d\n", packet.Header.Protocol)
-	fmt.Fprintf(t.w, "payload length \t %d\n", packet.Header.Len)
+	// TODO: need to figure out how to determine the length
+	fmt.Fprintf(t.w, "payload length \t %d\n", len(string(packet.Data[:])))
 	fmt.Fprintf(t.w, "payload \t %s\n", string(packet.Data[:]))
-	fmt.Println("---------------------------")
+	fmt.Fprintf(t.w, "---------------------------")
+	fmt.Println()
 	t.w.Flush()
 
 }
 
 func (t *TestHandler) InitHandler(data []interface{}) {
 	t.w = new(tabwriter.Writer)
-	t.w.Init(os.Stdout, 16, 10, 4, ':', 0)
+	t.w.Init(os.Stdout, 16, 10, 4, ' ', 0)
 	return
 }

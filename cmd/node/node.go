@@ -89,7 +89,12 @@ func printHelp(w io.Writer) {
 func sendCommand(h *pkg.Host, line string) {
 	args := strings.SplitN(line, " ", 4)
 
-	destAddr := binary.BigEndian.Uint32(net.ParseIP(args[1]).To4())
+	ipAddr := net.ParseIP(args[1])
+	if ipAddr == nil {
+		log.Print("Invalid ip address")
+		return
+	}
+	destAddr := binary.BigEndian.Uint32(ipAddr.To4())
 	protocolNum, err := strconv.Atoi(args[2])
 
 	if err != nil || protocolNum != TEST_PROTOCOL {
