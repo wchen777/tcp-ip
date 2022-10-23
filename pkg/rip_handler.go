@@ -57,7 +57,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	nextHop := binary.BigEndian.Uint32(packet.Header.Src.To4())
 	updatedEntries := make([]RIPEntry, 0)
 
-	log.Printf("RECEIVING STUFF FROM NEXT HOP: %d\n", nextHop)
 	for _, newEntry := range ripEntry.Entries {
 		oldEntry := table.CheckRoute(newEntry.Address)
 		if oldEntry == nil {

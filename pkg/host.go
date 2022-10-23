@@ -261,6 +261,10 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 	// This is where the routing table is consulted
 	// hit routing table to find next hop address
 	entry := h.RoutingTable.CheckRoute(destAddr)
+	if entry == nil {
+		// TODO: check this and why it would be seg faulting
+		return
+	}
 	if entry.Cost == INFINITY {
 		log.Print("Unable to reach destination because of cost infinity")
 		return

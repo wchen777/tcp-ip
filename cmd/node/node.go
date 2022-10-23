@@ -210,6 +210,8 @@ func main() {
 				IPPacketChannel: host.PacketChannel,
 			}
 
+			// log.Printf("parsed udp addr: %s", linkIF.UDPDestAddr)
+
 			host.LocalIFs[hostIPAddr] = &linkIF
 
 			host.RemoteDestination[neighborIPAddr] = hostIPAddr
