@@ -122,6 +122,7 @@ func (h *Host) SendToNeighbor(dest uint32, packet IPPacket) {
 
 	// lookup next hop address in remote destination map to find our interface address
 	if addrOfInterface, exists := h.RemoteDestination[dest]; exists {
+		log.Printf("Finding interface to send on: %d\n", dest)
 		// lookup correct interface from the address to send this packet on
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
 			localInterface.Send(packet)
@@ -219,11 +220,13 @@ func (h *Host) ReadFromLinkLayer() {
 			// And if all the above conditions are false, then sent to next hop.
 			// And if the next hop doesn't exist, the packet is dropped.
 			destAddr := binary.BigEndian.Uint32(packet.Header.Dst.To4())
+			log.Printf("received packet for %d\n", destAddr)
 			if localInterface, exists := h.LocalIFs[destAddr]; exists { // REACHED ITS DESTINATION -- FOR US
 				// This field should only be checked in the event that the packet has reached its destination
 				// call the appropriate handler function, otherwise packet is "dropped"
 				localInterface.StoppedLock.Lock()
 				if localInterface.Stopped {
+					log.Printf("this local interface is stopped: %d\n", localInterface.HostIPAddress)
 					localInterface.StoppedLock.Unlock()
 					continue
 				} else {
