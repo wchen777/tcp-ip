@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"log"
 	"sync"
 )
 
@@ -19,7 +20,7 @@ type RoutingTable struct {
 }
 
 func (rt *RoutingTable) CreateEntry(nextHop uint32, cost uint32) *RoutingTableEntry {
-	return &RoutingTableEntry{NextHop: nextHop, Cost: cost, UpdateChan: make(chan bool, 1)}
+	return &RoutingTableEntry{NextHop: nextHop, Cost: cost, UpdateChan: make(chan bool)}
 }
 
 // CheckRoute function --> gets the entry from the table when routing IP packets
@@ -57,16 +58,19 @@ func (rt *RoutingTable) AddRoute(dest uint32, cost uint32, nextHop uint32, updat
 	}
 }
 
-func (rt *RoutingTable) RemoveNextHop(nextHop uint32) {
+func (rt *RoutingTable) RemoveNextHops(nextHops []uint32) {
 	rt.TableLock.Lock()
 	defer rt.TableLock.Unlock()
+	log.Print("pls be here")
 
 	for dest, entry := range rt.Table {
-		if entry.NextHop == nextHop {
-			delete(rt.Table, dest)
+		for _, nh := range nextHops {
+			if nh == entry.NextHop {
+				log.Print("we got here!")
+				rt.Table[dest].Cost = INFINITY
+			}
 		}
 	}
-
 }
 
 func (rt *RoutingTable) RemoveRoute(dest uint32) {

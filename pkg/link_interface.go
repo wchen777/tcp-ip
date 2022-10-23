@@ -3,6 +3,7 @@ package pkg
 import (
 	"fmt"
 	"net"
+	"sync"
 
 	"golang.org/x/net/ipv4"
 )
@@ -35,7 +36,8 @@ type LinkInterface struct {
 	UDPDestPort string
 	UDPDestAddr string
 
-	Stopped bool
+	Stopped     bool
+	StoppedLock sync.Mutex
 }
 
 /*
@@ -60,15 +62,10 @@ func (c *LinkInterface) InitializeDestConnection() (err error) {
 func (c *LinkInterface) Listen() (err error) {
 
 	for {
-		// TODO: pls fix this. THIS IS BAD!!!!!! BAD FOR OUR HEALTH PLUS CPU HEALTH
 		// Take a look at sync.Cond, sync.WaitGroup
-		if c.Stopped {
-			continue
-		}
-
 		// always listening for packets
 		buffer := make([]byte, MTU)
-		_, _, err := c.HostConnection.ReadFromUDP(buffer)
+		bytesRead, _, err := c.HostConnection.ReadFromUDP(buffer)
 		if err != nil {
 			fmt.Print(err)
 			return err
@@ -80,10 +77,16 @@ func (c *LinkInterface) Listen() (err error) {
 		ipPacket := IPPacket{}
 		hdr, _ := ipv4.ParseHeader(buffer)
 		ipPacket.Header = *hdr
-		ipPacket.Data = buffer[hdr.Len:]
+		ipPacket.Data = buffer[hdr.Len:bytesRead]
 
 		// send to network layer from link layer
-		c.IPPacketChannel <- ipPacket
+		c.StoppedLock.Lock()
+		if !c.Stopped {
+			c.StoppedLock.Unlock()
+			c.IPPacketChannel <- ipPacket
+		} else {
+			c.StoppedLock.Unlock()
+		}
 	}
 }
 
@@ -92,6 +95,7 @@ func (c *LinkInterface) Listen() (err error) {
 */
 func (c *LinkInterface) Send(ip_packet IPPacket) {
 	if c.Stopped {
+		fmt.Println("blocked sending")
 		return
 	}
 
@@ -99,7 +103,8 @@ func (c *LinkInterface) Send(ip_packet IPPacket) {
 	bytes, _ := ip_packet.Header.Marshal()
 	bytes = append(bytes, ip_packet.Data...)
 
-	c.DestConnection.Write(bytes)
+	_, _ = c.DestConnection.Write(bytes)
+
 	return
 }
 
@@ -107,6 +112,8 @@ func (c *LinkInterface) Send(ip_packet IPPacket) {
 	enable/disable link interface at runtime
 */
 func (c *LinkInterface) Enable() {
+	c.StoppedLock.Lock()
+	defer c.StoppedLock.Unlock()
 	c.Stopped = false
 }
 
@@ -114,5 +121,7 @@ func (c *LinkInterface) Enable() {
 	enable/disable link interface at runtime
 */
 func (c *LinkInterface) Disable() {
+	c.StoppedLock.Lock()
+	defer c.StoppedLock.Unlock()
 	c.Stopped = true
 }

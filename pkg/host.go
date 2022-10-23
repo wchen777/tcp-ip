@@ -23,8 +23,9 @@ type Host struct {
 }
 
 const (
-	IPV6      = 6
-	ADDR_SIZE = 4
+	IPV6         = 6
+	ADDR_SIZE    = 4
+	RIP_PROTOCOL = 200
 )
 
 func computeChecksum(packet IPPacket) (uint16, error) {
@@ -32,11 +33,12 @@ func computeChecksum(packet IPPacket) (uint16, error) {
 	packet.Header.Checksum = 0
 	headerBytes, err := packet.Header.Marshal()
 	if err != nil {
+		// TODO: make sure that we are error checking the return value
 		log.Print("Dropping packet because marshalling packet failed")
 		return 0, err
 	}
 
-	return header.Checksum(headerBytes, 0), nil
+	return header.Checksum(headerBytes, 0) ^ 0xffff, nil
 }
 
 func (h *Host) InitHost() {
@@ -51,6 +53,7 @@ func (h *Host) InitHost() {
 	general send function for the command in the driver
 */
 func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
+
 	// determine the next hop
 	entry := h.RoutingTable.CheckRoute(destAddr)
 
@@ -59,14 +62,33 @@ func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
 		return errors.New("Entry doesn't exist")
 	}
 
+	// if the cost of the entry that we're trying to send to is INFINITY, then we return because we can't send
+	if entry.Cost == INFINITY {
+		log.Print("Can't send because cost is infinity")
+		return nil
+	}
+
 	nextHop := entry.NextHop
+
+	// check if we are sending to one of our interfaces
+	if _, exists := h.LocalIFs[nextHop]; exists {
+		packet := h.CreateIPPacket(nextHop, destAddr, []byte(data), 0)
+		checkSum, _ := computeChecksum(packet)
+		packet.Header.Checksum = int(checkSum)
+		h.PacketChannel <- packet
+		return nil
+	}
 
 	// lookup next hop address in remote destination map to find our interface address
 	if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
 		// lookup correct interface from the address to send this packet on
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
 			// create the packet and send to link layer
-			packet := h.CreateIPPacket(addrOfInterface, destAddr, []byte(data))
+			packet := h.CreateIPPacket(addrOfInterface, destAddr, []byte(data), 0)
+
+			// make sure we are computing the checksum in this case too
+			checkSum, _ := computeChecksum(packet)
+			packet.Header.Checksum = int(checkSum)
 			localInterface.Send(packet)
 		}
 	}
@@ -92,6 +114,12 @@ func (h *Host) SendToNeighbor(dest uint32, packet IPPacket) {
 
 	packet.Header.Checksum = int(newCheckSum)
 
+	// entry := h.RoutingTable.CheckRoute(dest)
+	// if entry != nil && entry.Cost == INFINITY {
+	// 	log.Print("Unable to reach destination because of cost infinity")
+	// 	return
+	// }
+
 	// lookup next hop address in remote destination map to find our interface address
 	if addrOfInterface, exists := h.RemoteDestination[dest]; exists {
 		// lookup correct interface from the address to send this packet on
@@ -114,14 +142,14 @@ func (h *Host) ReadFromHandler() {
 			if len(data) == 0 { // check for empty data
 				break
 			}
-
+			// log.Print("Received data from rip handler channel")
 			// get dest and src addr for the message
 			destAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
 			// log.Printf("DESTINATION ADDR 2: %d\n", destAddr)
 			srcAddr := h.RemoteDestination[destAddr]
 
 			// Create an IP packet here
-			packet := h.CreateIPPacket(srcAddr, destAddr, data[ADDR_SIZE:])
+			packet := h.CreateIPPacket(srcAddr, destAddr, data[ADDR_SIZE:], RIP_PROTOCOL)
 
 			// send to the link layer on the correct interface
 			go h.SendToNeighbor(destAddr, packet)
@@ -129,7 +157,7 @@ func (h *Host) ReadFromHandler() {
 	}
 }
 
-func (h *Host) CreateIPPacket(src uint32, dest uint32, data []byte) IPPacket {
+func (h *Host) CreateIPPacket(src uint32, dest uint32, data []byte, protocol int) IPPacket {
 	srcAddress := net.IPv4(byte(src>>24), byte(src>>16), byte(src>>8), byte(src))
 	destAddress := net.IPv4(byte(dest>>24), byte(dest>>16), byte(dest>>8), byte(dest))
 
@@ -141,9 +169,9 @@ func (h *Host) CreateIPPacket(src uint32, dest uint32, data []byte) IPPacket {
 		ID:       0,
 		Flags:    0,
 		FragOff:  0,
-		TTL:      32,
-		Protocol: 200,
-		Checksum: 0, // checksum will be computed in send link layer
+		TTL:      16,
+		Protocol: protocol, // no longer hardcoded
+		Checksum: 0,        // checksum will be computed in send link layer
 		Src:      srcAddress,
 		Dst:      destAddress,
 		Options:  []byte{},
@@ -173,7 +201,9 @@ func (h *Host) ReadFromLinkLayer() {
 				continue
 			}
 
-			if newCheckSum != uint16(checkSum) {
+			if int(newCheckSum) != checkSum {
+				log.Printf("original check sum: %d\n", checkSum)
+				log.Printf("new check sum: %d\n", newCheckSum)
 				log.Print("Dropping packet: checksum failed")
 				continue
 			}
@@ -189,15 +219,23 @@ func (h *Host) ReadFromLinkLayer() {
 			// And if all the above conditions are false, then sent to next hop.
 			// And if the next hop doesn't exist, the packet is dropped.
 			destAddr := binary.BigEndian.Uint32(packet.Header.Dst.To4())
-			if _, exists := h.LocalIFs[destAddr]; exists {
+			if localInterface, exists := h.LocalIFs[destAddr]; exists { // REACHED ITS DESTINATION -- FOR US
 				// This field should only be checked in the event that the packet has reached its destination
 				// call the appropriate handler function, otherwise packet is "dropped"
+				localInterface.StoppedLock.Lock()
+				if localInterface.Stopped {
+					localInterface.StoppedLock.Unlock()
+					continue
+				} else {
+					localInterface.StoppedLock.Unlock()
+				}
+
 				if handler, exists := h.HandlerRegistry[packet.Header.Protocol]; exists {
 					go handler.ReceivePacket(packet, h.RoutingTable)
 				} else {
 					log.Print("Dropping packet: handler protocol not registered")
 				}
-			} else {
+			} else { // FORWARD THE PACKET
 				// decrement TTL
 				packet.Header.TTL -= 1
 
@@ -222,8 +260,17 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 
 	// This is where the routing table is consulted
 	// hit routing table to find next hop address
-	nextHop := h.RoutingTable.CheckRoute(destAddr).NextHop
+	entry := h.RoutingTable.CheckRoute(destAddr)
+	if entry == nil {
+		// TODO: check this and why it would be seg faulting
+		return
+	}
+	if entry.Cost == INFINITY {
+		log.Print("Unable to reach destination because of cost infinity")
+		return
+	}
 
+	nextHop := entry.NextHop
 	// lookup next hop address in remote destination map to find our interface address
 	if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
 		// lookup correct interface from the address to send this packet on
@@ -250,10 +297,10 @@ func (h *Host) DownInterface(interfaceNum int) error {
 			interf.Disable()
 
 			// update the routing table
-			// get the immediate neighbor for this interface,
-			// i.e. the receiver on this link
+			// remove any entry that should go through the this interface
 			neighbor := interf.DestIPAddress
-			h.RoutingTable.RemoveNextHop(neighbor)
+			h.RoutingTable.RemoveNextHops([]uint32{interf.HostIPAddress, neighbor})
+			log.Printf("interface %d is now down", interfaceNum)
 			return nil
 		}
 	}
@@ -272,10 +319,15 @@ func (h *Host) UpInterface(interfaceNum int) error {
 
 			// update the routing table with ourself first
 			// the periodic updates function should propogate this entry
+			h.RoutingTable.TableLock.Lock()
 			h.RoutingTable.Table[interf.HostIPAddress] = h.RoutingTable.CreateEntry(interf.HostIPAddress, 0)
+			h.RoutingTable.TableLock.Unlock()
+
+			log.Printf("interface %d is back up", interfaceNum)
+			return nil
 		}
 	}
-	return nil
+	return errors.New("could not find interface associated with this number")
 }
 
 /*

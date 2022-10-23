@@ -44,15 +44,15 @@ func addrNumToIP(addr uint32) string {
 /*
 	Routine for printing out the active interfaces
 */
-func printInterfaces(h *pkg.Host) {
-	fmt.Printf("id  state  local  remote\n")
+func printInterfaces(h *pkg.Host, w io.Writer) {
+	fmt.Fprintf(w, "id\t  state\t  local\t  remote\n")
 	for addrLocalIF, localIF := range h.LocalIFs {
 		addrLocal := addrNumToIP(addrLocalIF)
 		addrRemote := addrNumToIP(localIF.DestIPAddress)
 		if localIF.Stopped {
-			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "down", addrLocal, addrRemote)
+			fmt.Fprintf(w, "%d\t  %s\t  %s\t  %s\n", localIF.InterfaceNumber, "down", addrLocal, addrRemote)
 		} else {
-			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "up", addrLocal, addrRemote)
+			fmt.Fprintf(w, "%d\t  %s\t  %s\t  %s\n", localIF.InterfaceNumber, "up", addrLocal, addrRemote)
 		}
 	}
 }
@@ -60,13 +60,16 @@ func printInterfaces(h *pkg.Host) {
 /*
 	Routine for printing out the routing table
 */
-func printRoutingTable(h *pkg.Host) {
-	fmt.Printf("dest  next  cost\n")
+func printRoutingTable(h *pkg.Host, w io.Writer) {
+	fmt.Fprintf(w, "dest\t  next\t  cost\n")
 	for dest, entry := range h.RoutingTable.Table {
 		destAddr := addrNumToIP(dest)
 		nextHop := entry.NextHop
+		if entry.Cost == pkg.INFINITY {
+			continue
+		}
 		nextHopAddr := addrNumToIP(nextHop)
-		fmt.Printf("%s  %s   %d\n", destAddr, nextHopAddr, entry.Cost)
+		fmt.Fprintf(w, "%s\t  %s\t  %d\n", destAddr, nextHopAddr, entry.Cost)
 	}
 }
 
@@ -89,7 +92,12 @@ func printHelp(w io.Writer) {
 func sendCommand(h *pkg.Host, line string) {
 	args := strings.SplitN(line, " ", 4)
 
-	destAddr := binary.BigEndian.Uint32(net.ParseIP(args[1]).To4())
+	ipAddr := net.ParseIP(args[1])
+	if ipAddr == nil {
+		log.Print("Invalid ip address")
+		return
+	}
+	destAddr := binary.BigEndian.Uint32(ipAddr.To4())
 	protocolNum, err := strconv.Atoi(args[2])
 
 	if err != nil || protocolNum != TEST_PROTOCOL {
@@ -202,6 +210,8 @@ func main() {
 				IPPacketChannel: host.PacketChannel,
 			}
 
+			// log.Printf("parsed udp addr: %s", linkIF.UDPDestAddr)
+
 			host.LocalIFs[hostIPAddr] = &linkIF
 
 			host.RemoteDestination[neighborIPAddr] = hostIPAddr
@@ -226,7 +236,8 @@ func main() {
 
 	dataForHandler := make([]interface{}, 0)
 	// sending both the routingTable and the RemoteDestinations as that contains the neighbors
-	dataForHandler = append(dataForHandler, routingTable, &host.RemoteDestination)
+	// TODO: temp solution
+	dataForHandler = append(dataForHandler, routingTable, &host.RemoteDestination, host.LocalIFs)
 	go ripHandler.InitHandler(dataForHandler)
 
 	// start listening for the host
@@ -243,23 +254,32 @@ func main() {
 	fmt.Print("> ")
 	for scanner.Scan() {
 		line := scanner.Text()
+		if line == "\n" {
+			continue
+		}
 		commands := strings.Split(line, " ")
 
 		switch commands[0] {
-		case "\n":
-			continue
 		case "interfaces":
 			// information about interfaces
-			printInterfaces(&host)
+			printInterfaces(&host, w)
+			w.Flush()
+			break
 		case "li":
-			// information about the interfaces
-			printInterfaces(&host)
+			// information about interfaces
+			printInterfaces(&host, w)
+			w.Flush()
+			break
 		case "routes":
 			// routing table information
-			printRoutingTable(&host)
+			printRoutingTable(&host, w)
+			w.Flush()
+			break
 		case "lr":
 			// routing table information
-			printRoutingTable(&host)
+			printRoutingTable(&host, w)
+			w.Flush()
+			break
 		case "down":
 			if len(commands) < 2 {
 				log.Print("Invalid number of arguments for down")
