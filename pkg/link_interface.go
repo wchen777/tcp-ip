@@ -68,7 +68,7 @@ func (c *LinkInterface) Listen() (err error) {
 
 		// always listening for packets
 		buffer := make([]byte, MTU)
-		_, _, err := c.HostConnection.ReadFromUDP(buffer)
+		bytesRead, _, err := c.HostConnection.ReadFromUDP(buffer)
 		if err != nil {
 			fmt.Print(err)
 			return err
@@ -80,7 +80,7 @@ func (c *LinkInterface) Listen() (err error) {
 		ipPacket := IPPacket{}
 		hdr, _ := ipv4.ParseHeader(buffer)
 		ipPacket.Header = *hdr
-		ipPacket.Data = buffer[hdr.Len:]
+		ipPacket.Data = buffer[hdr.Len:bytesRead]
 
 		// send to network layer from link layer
 		c.IPPacketChannel <- ipPacket

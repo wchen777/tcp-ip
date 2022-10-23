@@ -67,7 +67,7 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 			table.AddRoute(newEntry.Address, newEntry.Cost+1, nextHop, updateChan)
 			// send new update to every neighbor except for the one we received message from
 			updatedEntries = append(updatedEntries, newEntry)
-			go r.waitForUpdates(newEntry.Address, updateChan, table)
+			go r.waitForUpdates(newEntry.Address, nextHop, updateChan, table)
 		} else {
 			// D --> destination address
 			// C_old --> the cost
@@ -89,8 +89,11 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 				log.Printf("old next hop: %d\n", oldEntry.NextHop)
 				// if C < C_old, update table <D, C, N> --> found better route
 				// if C > C_old and N == M, update table <D, C, M> --> increased cost
-
-				table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
+				if newEntry.Cost == INFINITY {
+					table.UpdateRoute(newEntry.Address, newEntry.Cost, nextHop)
+				} else {
+					table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
+				}
 				updatedEntries = append(updatedEntries, newEntry)
 			} else if (newEntry.Cost+1 > oldEntry.Cost) && oldEntry.NextHop != nextHop {
 				// do not send an update if this is the case
@@ -148,25 +151,27 @@ func (r *RipHandler) InitHandler(data []interface{}) {
 	for key := range neighborMap {
 		r.Neighbors = append(r.Neighbors, key)
 	}
-	// log.Printf("NEIGHBORS: %v\n", r.Neighbors)
 
-	// for
-	// entries := r.GetAllEntries(table)
-	// numEntries := len(entries)
+	// send initial updates when the node comes online
+	for _, neighbor := range r.Neighbors {
+		entries := r.GetAllEntries(table)
+		numEntries := len(entries)
 
-	// newRIPMessage := RIPMessage{}
-	// newRIPMessage.Command = 1
-	// newRIPMessage.NumEntries = uint16(numEntries)
-	// newRIPMessage.Entries = entries
+		newRIPMessage := RIPMessage{}
+		newRIPMessage.Command = 1
+		newRIPMessage.NumEntries = uint16(numEntries)
+		newRIPMessage.Entries = entries
 
-	// bytesArray := &bytes.Buffer{}
-	// binary.Write(bytesArray, binary.BigEndian, )
-	// binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
-	// binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
-	// binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
+		bytesArray := &bytes.Buffer{}
+		binary.Write(bytesArray, binary.BigEndian, neighbor)
+		binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
+		binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
+		binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Entries)
 
-	// send to channel that is shared with the host
-	// r.MessageChan <- bytesArray.Bytes()
+		// send to channel that is shared with the host
+		r.MessageChan <- bytesArray.Bytes()
+	}
+
 	go r.SendUpdatesToNeighbors(table)
 }
 
@@ -214,7 +219,6 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 		case <-timer.C:
 			// send updates to all neighbors with entries from its routing table
 			for _, neighbor := range r.Neighbors {
-				// log.Print("Sending updates to neighbors now")
 				// get routing table entries specific to a particular neighbor
 				// the cost needs to be poisoned with INFINITY
 
@@ -229,7 +233,6 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 
 				bytesArray := &bytes.Buffer{}
 				// the first four bytes should be the ip address of the neighbor
-				// log.Printf("DESTINATION ADDR 1: %d\n", neighbor)
 				binary.Write(bytesArray, binary.BigEndian, neighbor)
 				binary.Write(bytesArray, binary.BigEndian, newRIPMessage.Command)
 				binary.Write(bytesArray, binary.BigEndian, newRIPMessage.NumEntries)
@@ -237,7 +240,6 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 
 				// send to channel that is shared with the host
 				r.MessageChan <- bytesArray.Bytes()
-				// log.Print("Finished sending to host")
 			}
 		}
 	}
@@ -278,13 +280,12 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 		// send to channel that is shared with the host
 		r.MessageChan <- bytesArray.Bytes()
 	}
-	// log.Print("returning here")
 	return
 }
 
 // called for each new entry that is created
 // works with two channels: timeout channel which waits for 12 seconds
-func (r *RipHandler) waitForUpdates(newEntryAddress uint32, updateChan chan bool, table *RoutingTable) {
+func (r *RipHandler) waitForUpdates(newEntryAddress uint32, nextHop uint32, updateChan chan bool, table *RoutingTable) {
 
 	timeout := time.After(time.Duration(TIMEOUT * time.Second))
 	for {
@@ -298,7 +299,11 @@ func (r *RipHandler) waitForUpdates(newEntryAddress uint32, updateChan chan bool
 		case <-timeout:
 			// If we have reached the timeout case, then we should remove the entry and return
 			log.Printf("timeout: %d", newEntryAddress)
-			table.RemoveRoute(newEntryAddress)
+			// table.RemoveRoute(newEntryAddress)
+			table.UpdateRoute(newEntryAddress, 16, nextHop)
+			// TODO: this is where we add triggered updates
+			// deleteEntry := []RIPEntry{{Cost: INFINITY, Address: newEntryAddress, Mask: MASK}}
+			// go r.SendTriggeredUpdates(deleteEntry, table)
 			return
 		}
 	}

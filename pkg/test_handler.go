@@ -22,15 +22,13 @@ type TestHandler struct {
 
 func (t *TestHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	fmt.Println()
-	fmt.Println("---Node received packet!---")
-	fmt.Fprintf(t.w, "source IP \t %s\n", packet.Header.Src.String())
-	fmt.Fprintf(t.w, "destination IP \t %s\n", packet.Header.Dst.String())
-	fmt.Fprintf(t.w, "protocol \t %d\n", packet.Header.Protocol)
-	// TODO: need to figure out how to determine the length
-	fmt.Fprintf(t.w, "payload length \t %d\n", len(string(packet.Data[:])))
-	fmt.Fprintf(t.w, "payload \t %s\n", string(packet.Data[:]))
-	fmt.Fprintf(t.w, "---------------------------")
-	fmt.Println()
+	fmt.Fprint(t.w, "---Node received packet!---\n")
+	fmt.Fprintf(t.w, "source IP: \t %s\n", packet.Header.Src.String())
+	fmt.Fprintf(t.w, "destination IP: \t %s\n", packet.Header.Dst.String())
+	fmt.Fprintf(t.w, "protocol: \t %d\n", packet.Header.Protocol)
+	fmt.Fprintf(t.w, "payload length: \t %d\n", len(string(packet.Data[:])))
+	fmt.Fprintf(t.w, "payload: \t %s\n", string(packet.Data[:]))
+	fmt.Fprintf(t.w, "---------------------------\n")
 	t.w.Flush()
 
 }

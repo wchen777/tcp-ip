@@ -44,15 +44,15 @@ func addrNumToIP(addr uint32) string {
 /*
 	Routine for printing out the active interfaces
 */
-func printInterfaces(h *pkg.Host) {
-	fmt.Printf("id\t  state\t  local\t  remote\n")
+func printInterfaces(h *pkg.Host, w io.Writer) {
+	fmt.Fprintf(w, "id\t  state\t  local\t  remote\n")
 	for addrLocalIF, localIF := range h.LocalIFs {
 		addrLocal := addrNumToIP(addrLocalIF)
 		addrRemote := addrNumToIP(localIF.DestIPAddress)
 		if localIF.Stopped {
-			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "down", addrLocal, addrRemote)
+			fmt.Fprintf(w, "%d\t  %s\t  %s\t  %s\n", localIF.InterfaceNumber, "down", addrLocal, addrRemote)
 		} else {
-			fmt.Printf("%d  %s  %s  %s\n", localIF.InterfaceNumber, "up", addrLocal, addrRemote)
+			fmt.Fprintf(w, "%d\t  %s\t  %s\t  %s\n", localIF.InterfaceNumber, "up", addrLocal, addrRemote)
 		}
 	}
 }
@@ -60,13 +60,16 @@ func printInterfaces(h *pkg.Host) {
 /*
 	Routine for printing out the routing table
 */
-func printRoutingTable(h *pkg.Host) {
-	fmt.Printf("dest\t  next\t  cost\n")
+func printRoutingTable(h *pkg.Host, w io.Writer) {
+	fmt.Fprintf(w, "dest\t  next\t  cost\n")
 	for dest, entry := range h.RoutingTable.Table {
 		destAddr := addrNumToIP(dest)
 		nextHop := entry.NextHop
+		if entry.Cost == pkg.INFINITY {
+			continue
+		}
 		nextHopAddr := addrNumToIP(nextHop)
-		fmt.Printf("%s  %s   %d\n", destAddr, nextHopAddr, entry.Cost)
+		fmt.Fprintf(w, "%s\t  %s\t  %d\n", destAddr, nextHopAddr, entry.Cost)
 	}
 }
 
@@ -249,23 +252,32 @@ func main() {
 	fmt.Print("> ")
 	for scanner.Scan() {
 		line := scanner.Text()
+		if line == "\n" {
+			continue
+		}
 		commands := strings.Split(line, " ")
 
 		switch commands[0] {
-		case "\n":
-			continue
 		case "interfaces":
 			// information about interfaces
-			printInterfaces(&host)
+			printInterfaces(&host, w)
+			w.Flush()
+			break
 		case "li":
-			// information about the interfaces
-			printInterfaces(&host)
+			// information about interfaces
+			printInterfaces(&host, w)
+			w.Flush()
+			break
 		case "routes":
 			// routing table information
-			printRoutingTable(&host)
+			printRoutingTable(&host, w)
+			w.Flush()
+			break
 		case "lr":
 			// routing table information
-			printRoutingTable(&host)
+			printRoutingTable(&host, w)
+			w.Flush()
+			break
 		case "down":
 			if len(commands) < 2 {
 				log.Print("Invalid number of arguments for down")
