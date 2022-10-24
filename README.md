@@ -13,6 +13,11 @@ These goroutines are called in `StartHost`:
 - Go routine that is listening for packets on the host through the UDP protocol
 - Go routine on the host that is listening for to-be-sent messages from the RIP handler, which is then sent through the correct interface
 
+We also have a goroutine when we process a packet for a handler (`ReceivePacket`) (so that it doesn't block the calling thread).
+
+
+
+
 ### RIP Protocol
 
 
