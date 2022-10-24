@@ -72,8 +72,6 @@ func (c *LinkInterface) Listen() (err error) {
 			return err
 		}
 
-		// fmt.Printf("Number of bytes read from link layer connection: %d\n", numBytes)
-
 		// deserialize into IPPacket to return
 		ipPacket := IPPacket{}
 		hdr, _ := ipv4.ParseHeader(buffer)

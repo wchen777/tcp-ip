@@ -135,6 +135,57 @@ func traceroute(h *pkg.Host, destAddr string) {
 		return
 	}
 
+	pathToTake := make([]uint32, 0)
+
+	// maybe have some sort of channel that 
+	timeExceededMsgChan := make(chan uint32 )
+	currTTL := 0
+	found := false 
+
+	for currTTL <= 16 && !found {
+		// send a packet 
+		h.SendPacket(destAddr, 10, "traceroute")
+		select {
+		case <- timeExceededMsgChan: 
+			// perhaps check to see if the message received had the correct destination 
+			// and if did we terminate, otherwise we need to keep going 
+			if () {
+				// means destination is valid 
+				// add to the pathToTake 
+				pathToTake := append()
+				if () {
+					// used to break out of the while loop 
+					found = true 
+					break
+				}
+			} else {
+				fmt.Printf("Host is unreachable or does not exist in the network")
+				return 
+			}
+		}
+		// increment TTL everytime we send 
+		currTTL++
+	}
+	
+
+	// once we have the first path
+	// need to determine which interface the message from the host was sent from
+	firstHop := pathToTake[0]
+	var startAddr string
+	if localIFAddr, exists := h.RemoteDestination[firstHop]; exists {
+		startAddr = addrNumToIP(localIFAddr)
+	} else {
+		// we should not get to this case
+		log.Printf("Starting address doesn't exist on host")
+		return
+	}
+
+	fmt.Printf("Traceroute from %s to %s\n", startAddr, destAddr)
+	for index, hop := range pathToTake {
+		hopAddr := addrNumToIP(hop)
+		fmt.Printf("%d %s\n", index+1, hopAddr)
+	}
+	fmt.Printf("Traceroute finished in %d hops\n", len(pathToTake))
 }
 
 // where everything should be initialized
@@ -343,7 +394,7 @@ func main() {
 				log.Print("Invalid number of arguments for traceroute")
 				break
 			}
-
+			traceroute(&host, commands[1])
 		default:
 			printHelp(w)
 			w.Flush()
