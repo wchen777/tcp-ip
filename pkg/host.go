@@ -24,6 +24,7 @@ type Host struct {
 	EchoChannel    chan []byte     // data from the traceroute handler
 
 	HandlerRegistry map[int]Handler
+	HostConnection  *net.UDPConn
 }
 
 const (
@@ -168,14 +169,12 @@ func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
 	entry := h.RoutingTable.CheckRoute(destAddr)
 
 	if entry == nil {
-		// TODO: fix for later
 		return errors.New("Entry doesn't exist")
 	}
 
 	// if the cost of the entry that we're trying to send to is INFINITY, then we return because we can't send
 	if entry.Cost == INFINITY {
-		log.Print("Can't send because cost is infinity")
-		return nil
+		return errors.New("Unable to reach destination")
 	}
 
 	nextHop := entry.NextHop
@@ -432,9 +431,10 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 	// hit routing table to find next hop address
 	entry := h.RoutingTable.CheckRoute(destAddr)
 	if entry == nil {
-		// TODO: check this and why it would be seg faulting
+		log.Printf("Could not find entry in the routing table, dest addr: %d", destAddr)
 		return
 	}
+
 	if entry.Cost == INFINITY {
 		log.Print("Unable to reach destination because of cost infinity")
 		return
@@ -451,6 +451,40 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 		}
 	} else {
 		log.Printf("next hop doesn't exist to forward")
+	}
+}
+
+func (h *Host) ListenOnPort() {
+	for {
+		// Take a look at sync.Cond, sync.WaitGroup
+		// always listening for packets
+		buffer := make([]byte, MTU)
+		bytesRead, udpAddr, err := h.HostConnection.ReadFromUDP(buffer) // TODO: check address of sender ()
+		if err != nil {
+			log.Print(err)
+		}
+
+		found := false
+		for _, localIF := range h.LocalIFs {
+			if udpAddr.Port == localIF.UDPDestPort { // we received a packet from an unknown "port", (ports need to be int)
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			log.Print("Could not find correct destination port")
+			continue
+		}
+
+		// deserialize into IPPacket to return
+		ipPacket := IPPacket{}
+		hdr, _ := ipv4.ParseHeader(buffer)
+		ipPacket.Header = *hdr
+		ipPacket.Data = buffer[hdr.Len:bytesRead]
+
+		// send to network layer from link layer
+		h.PacketChannel <- ipPacket
 	}
 }
 
@@ -505,9 +539,11 @@ func (h *Host) UpInterface(interfaceNum int) error {
 */
 func (h *Host) StartHost() {
 	// loop through all host interfaces and start goroutine for listen
-	for _, linkIF := range h.LocalIFs {
-		go linkIF.Listen()
-	}
+
+	//for _, linkIF := range h.LocalIFs {
+	//	go linkIF.Listen()
+	//}
+	go h.ListenOnPort()
 
 	// start goroutine for read from link layer
 	go h.ReadFromLinkLayer()

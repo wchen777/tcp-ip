@@ -21,8 +21,6 @@ const (
 )
 
 func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
-	// log.Print("Reached RIP handler...")
-
 	var table *RoutingTable
 
 	if val, ok := data.(*RoutingTable); ok {
@@ -39,8 +37,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	binary.Read(packetDataBuf, binary.BigEndian, &ripEntry.Command)
 	binary.Read(packetDataBuf, binary.BigEndian, &ripEntry.NumEntries)
 
-	// TODO: does casting here cause any issues?
-	// log.Printf("ENTRIES NUMBER: %d\n", int(ripEntry.NumEntries))
 	for i := 0; i < int(ripEntry.NumEntries); i++ {
 		entry := RIPEntry{}
 		binary.Read(packetDataBuf, binary.BigEndian, &entry.Cost)
@@ -48,7 +44,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 		binary.Read(packetDataBuf, binary.BigEndian, &entry.Mask)
 		ripEntry.Entries = append(ripEntry.Entries, entry)
 	}
-	// log.Printf("number of entries that are actually processed: %d\n", len(ripEntry.Entries))
 
 	// the next hop's destination address would be in the ip header
 	// i.e. neighbor's destination address
@@ -88,12 +83,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 				// if C < C_old, update table <D, C, N> --> found better route
 				// if C > C_old and N == M, update table <D, C, M> --> increased cost
 
-				// TODO: make sure that this check is no longer necessary
-				// if newEntry.Cost == INFINITY {
-				// 	table.UpdateRoute(newEntry.Address, newEntry.Cost, nextHop)
-				// } else {
-				// 	table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
-				// }
 				table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
 				updatedEntries = append(updatedEntries, newEntry)
 			} else if (newEntry.Cost+1 > oldEntry.Cost) && oldEntry.NextHop != nextHop {
@@ -239,7 +228,7 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 
 				numEntries := len(entries)
 				newRIPMessage := RIPMessage{}
-				newRIPMessage.Command = 1
+				newRIPMessage.Command = 2
 				newRIPMessage.NumEntries = uint16(numEntries)
 				newRIPMessage.Entries = entries
 
@@ -284,7 +273,7 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 
 		// send to one neighbor
 		newRIPMessage := RIPMessage{}
-		newRIPMessage.Command = 1
+		newRIPMessage.Command = 2
 		newRIPMessage.NumEntries = uint16(len(entriesToSend))
 		newRIPMessage.Entries = entriesToSend
 

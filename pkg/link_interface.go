@@ -5,8 +5,6 @@ import (
 	"log"
 	"net"
 	"sync"
-
-	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -31,11 +29,12 @@ type LinkInterface struct {
 	DestIPAddress   uint32 // this is the addr of the neighbor connected to the interface
 
 	HostConnection  *net.UDPConn
-	DestConnection  *net.UDPConn // this connects from current interface to the immediate link connection interface
 	IPPacketChannel chan IPPacket
 
-	UDPDestPort string
+	UDPDestPort int
 	UDPDestAddr string
+
+	UDPAddr *net.UDPAddr
 
 	Stopped     bool
 	StoppedLock sync.Mutex
@@ -44,50 +43,17 @@ type LinkInterface struct {
 /*
 	initialize connection to host on other side interface
 */
-func (c *LinkInterface) InitializeDestConnection() (err error) {
-	addrString := fmt.Sprintf("%s:%s", c.UDPDestAddr, c.UDPDestPort)
+func (c *LinkInterface) InitializeDestConnection(addr, port string) (err error) {
+	addrString := fmt.Sprintf("%s:%s", addr, port)
 	udpAddr, err := net.ResolveUDPAddr("udp4", addrString)
 
-	UDPConn, err := net.DialUDP("udp4", nil, udpAddr)
 	if err != nil {
 		return
 	}
-	c.DestConnection = UDPConn
+
+	c.UDPAddr = udpAddr
 
 	return
-}
-
-/*
-	Receive an ip packet from the link layer and send it to the ip layer
-*/
-func (c *LinkInterface) Listen() (err error) {
-
-	for {
-		// Take a look at sync.Cond, sync.WaitGroup
-		// always listening for packets
-		buffer := make([]byte, MTU)
-		bytesRead, _, err := c.HostConnection.ReadFromUDP(buffer)
-		if err != nil {
-			fmt.Print(err)
-			return err
-		}
-
-		// deserialize into IPPacket to return
-		ipPacket := IPPacket{}
-		hdr, _ := ipv4.ParseHeader(buffer)
-		ipPacket.Header = *hdr
-		ipPacket.Data = buffer[hdr.Len:bytesRead]
-
-		// send to network layer from link layer
-		// c.StoppedLock.Lock()
-		// if !c.Stopped {
-		// c.StoppedLock.Unlock()
-		c.IPPacketChannel <- ipPacket
-		// } else {
-		// 	log.Print("stopped is true on this interface")
-		// 	c.StoppedLock.Unlock()
-		// }
-	}
 }
 
 /*
@@ -102,11 +68,11 @@ func (c *LinkInterface) Send(ip_packet IPPacket) {
 	}
 	c.StoppedLock.Unlock()
 
-	// serializng IP packet into array of bytes
+	// serializing IP packet into array of bytes
 	bytes, _ := ip_packet.Header.Marshal()
 	bytes = append(bytes, ip_packet.Data...)
 
-	_, _ = c.DestConnection.Write(bytes)
+	_, _ = c.HostConnection.WriteToUDP(bytes, c.UDPAddr)
 
 	return
 }

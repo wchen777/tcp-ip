@@ -113,18 +113,19 @@ func sendCommand(h *pkg.Host, line string) {
 	err = h.SendPacket(destAddr, protocolNum, args[3])
 
 	if err != nil {
-		addrNum, _ := strconv.Atoi(err.Error())
-		addr := addrNumToIP(uint32(addrNum))
-		log.Print(fmt.Sprintf("cannot send to %s, it is an unreachable address", addr))
+		log.Print(fmt.Sprintf("Cannot send to %s, it is an unreachable address", ipAddr.String()))
 	}
 }
 
 /*
 	q command to quit out of REPL and clean up UDP sending connections
 */
-func quit(h *pkg.Host) {
-	for _, interf := range h.LocalIFs {
-		interf.DestConnection.Close()
+func quit(hConn *net.UDPConn) {
+	err := hConn.Close()
+
+	if err != nil {
+		log.Print("could not close host udp conn")
+		os.Exit(1)
 	}
 
 	os.Exit(0)
@@ -184,7 +185,6 @@ func main() {
 	scanner := bufio.NewScanner(f) // read from .lnx file:
 
 	var hostConn *net.UDPConn
-	//defer hostConn.Close()
 
 	l := 0
 	for scanner.Scan() {
@@ -212,6 +212,7 @@ func main() {
 			// The socket that we will be listening to
 			hostConn = hostSocket
 
+			host.HostConnection = hostSocket
 		} else {
 			// line 2+
 
@@ -228,6 +229,12 @@ func main() {
 
 			hostIP := line[2]
 			neighborIP := line[3]
+			udpDestPort, err := strconv.Atoi(line[1])
+
+			if err != nil {
+				log.Print("Could not parse udp dest addr")
+			}
+
 			hostIPAddr := binary.BigEndian.Uint32(net.ParseIP(hostIP).To4())
 			neighborIPAddr := binary.BigEndian.Uint32(net.ParseIP(neighborIP).To4())
 
@@ -237,8 +244,8 @@ func main() {
 				HostConnection:  hostConn,
 				HostIPAddress:   hostIPAddr,
 				DestIPAddress:   neighborIPAddr,
-				UDPDestAddr:     line[0],
-				UDPDestPort:     line[1],
+				UDPDestAddr:     line[0],     // addr as string
+				UDPDestPort:     udpDestPort, // udp dest port converted to int
 				Stopped:         false,
 				IPPacketChannel: host.PacketChannel,
 			}
@@ -249,7 +256,10 @@ func main() {
 
 			host.RemoteDestination[neighborIPAddr] = hostIPAddr
 
-			linkIF.InitializeDestConnection()
+			if linkIF.InitializeDestConnection(line[0], line[1]) != nil { // addr and port as both strings
+				log.Print("could not initialize interface connection")
+				continue
+			}
 		}
 		l++
 	}
@@ -361,7 +371,7 @@ func main() {
 				log.Print("Invalid number of arguments for q")
 				break
 			}
-			quit(&host)
+			quit(hostConn)
 		case "traceroute":
 			if len(commands) != 2 {
 				log.Print("Invalid number of arguments for traceroute")
