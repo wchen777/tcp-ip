@@ -47,8 +47,6 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 
 	// the next hop's destination address would be in the ip header
 	// i.e. neighbor's destination address
-	// TODO: this should be correct as our immediate neighbors are the ones
-	//       sending a message to the node that is currently reading / handling this packet
 	nextHop := binary.BigEndian.Uint32(packet.Header.Src.To4())
 	updatedEntries := make([]RIPEntry, 0)
 
@@ -66,20 +64,16 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 			// C_old --> the cost
 			// M --> the neighbor / next hop
 
-			// if newEntry.Cost == INFINITY {
-			// 	log.Print("received poisoned entry")
-			// }
-
 			// log.Printf("old entry's next hop: %d\n", oldEntry.NextHop)
 			// log.Printf("next hop: %d\n", nextHop)
 
 			// If existing entry <D, C_old, M>
 			if (newEntry.Cost+1 < oldEntry.Cost) || (newEntry.Cost+1 > oldEntry.Cost && oldEntry.NextHop == nextHop) {
-				log.Print("updating existing entry")
-				log.Printf("new entry cost: %d\n", newEntry.Cost)
-				log.Printf("old entry cost: %d\n", oldEntry.Cost)
-				log.Printf("new next hop: %d\n", nextHop)
-				log.Printf("old next hop: %d\n", oldEntry.NextHop)
+				//log.Print("updating existing entry")
+				//log.Printf("new entry cost: %d\n", newEntry.Cost)
+				//log.Printf("old entry cost: %d\n", oldEntry.Cost)
+				//log.Printf("new next hop: %d\n", nextHop)
+				//log.Printf("old next hop: %d\n", oldEntry.NextHop)
 				// if C < C_old, update table <D, C, N> --> found better route
 				// if C > C_old and N == M, update table <D, C, M> --> increased cost
 
@@ -174,7 +168,6 @@ func (r *RipHandler) GetAllEntries(table *RoutingTable) []RIPEntry {
 	for destination, entry := range table.Table {
 		if entry.Cost == INFINITY {
 			// don't want to forward entries that have a cost of 16
-			// TODO: is it necessary to include this check here? don't think at start up we should have any 16 entries
 			log.Printf("not including this destination entry: %d\n", destination)
 			continue
 		}
@@ -253,15 +246,9 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 	// iterate through the map and send to every entry including the nextHop / ReceivedFrom address,
 	// we should instead send INFINITY
 	for _, neighbor := range r.Neighbors {
-		// log.Print("here lol 2")
 		// iterate through the immediate neighbors to send only the updates to routing table
 		for i, entry := range entriesToSend {
 			newEntry := table.CheckRoute(entry.Address)
-			// if newEntry.Cost == INFINITY {
-			// 	// TODO: is this check necessary?
-			// 	//       this also shouldn't be able to happen
-			// 	continue
-			// }
 			if newEntry == nil {
 				// log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
 			} else if newEntry.NextHop == neighbor {
@@ -304,12 +291,8 @@ func (r *RipHandler) waitForUpdates(newEntryAddress uint32, nextHop uint32, upda
 			}
 		case <-timeout:
 			// If we have reached the timeout case, then we should remove the entry and return
-			log.Printf("timeout: %d", newEntryAddress)
-			// table.RemoveRoute(newEntryAddress)
+			//log.Printf("timeout: %d", newEntryAddress)
 			table.UpdateRoute(newEntryAddress, 16, nextHop)
-			// TODO: this is where we add triggered updates
-			// deleteEntry := []RIPEntry{{Cost: INFINITY, Address: newEntryAddress, Mask: MASK}}
-			// go r.SendTriggeredUpdates(deleteEntry, table)
 			timeout = time.After(time.Duration(TIMEOUT * time.Second))
 		}
 	}

@@ -14,9 +14,13 @@ These goroutines are called in `StartHost`:
 - Go routine on the host that is listening for to-be-sent messages from the RIP handler, which is then sent through the correct interface
 
 We also have a goroutine when we process a packet for a handler (`ReceivePacket`) (so that it doesn't block the calling thread).
+For the same reason above, we run the function to forward a packet to be sent on the correct interface in a goroutine.
 
-
-
+In the RIP handler, we have goroutines to handle timeouts. Whenever a new entry is created in the routing table, we create a new goroutine
+that is constantly waiting on a timer. This goroutine is associated with a channel for that entry that accepts an "update" message to reset the timer.
+If the timer reaches the timeout before an update message is received, the entry gets updated with a cost of INFINITY 
+(effectively deleting the message). 
+Additionally, whenever the RIP handler needs to send out updates we run those functions on a goroutine so they do not block the calling thread as well.
 
 ### RIP Protocol
 
