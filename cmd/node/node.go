@@ -33,8 +33,8 @@ func NewRipHandler(msgChan chan []byte) pkg.Handler {
 	return &pkg.RipHandler{MessageChan: msgChan}
 }
 
-func NewTracerouteHandler(msgChan chan []uint32) pkg.Handler {
-	return &pkg.TracerouteHandler{RouteChan: msgChan}
+func NewTracerouteHandler(nextHopMsg chan pkg.NextHopMsg, echoChan chan []byte) pkg.Handler {
+	return &pkg.TracerouteHandler{RouteChan: nextHopMsg, EchoChan: echoChan}
 }
 
 func NewTestHandler() pkg.Handler {
@@ -151,7 +151,7 @@ func traceroute(h *pkg.Host, destAddr string) {
 		fmt.Printf("Traceroute to %s does not exists\n", destAddr)
 	} else {
 		startAddr := path[0]
-		fmt.Printf("Traceroute from %s to %s\n", startAddr, destAddr)
+		fmt.Printf("Traceroute from %s to %s\n", addrNumToIP(startAddr), destAddr)
 		for index, hop := range pathToTake {
 			hopAddr := addrNumToIP(hop)
 			fmt.Printf("%d  %s\n", index+1, hopAddr)
@@ -266,7 +266,7 @@ func main() {
 	testHandler.InitHandler(nil)
 
 	// initialize the traceroute handler, pass in the channel to be used
-	tracerouteHandler := NewTracerouteHandler(host.ICMPChannel)
+	tracerouteHandler := NewTracerouteHandler(host.NextHopChannel, host.EchoChannel)
 
 	host.RegisterHandler(RIP_PROTOCOL, ripHandler) //
 	host.RegisterHandler(TEST_PROTOCOL, testHandler)

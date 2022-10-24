@@ -13,13 +13,13 @@ const (
 )
 
 type NextHopMsg struct {
-	Done    bool
+	Found   bool
 	NextHop uint32
 }
 
 type TracerouteHandler struct {
 	RouteChan chan NextHopMsg
-	EchoChan  chan traceroute.Echo
+	EchoChan  chan []byte // sending replies back to the src
 }
 
 // routine for when we receive something from the host
@@ -36,14 +36,33 @@ func (tr *TracerouteHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	case ECHO:
 		// we have reached our destination and we should ask the host to
 		// send a message back to the host to send an echo reply back to the src in the echo message
+		dataBytes := make([]byte, 64)
+		packetDataBuf = bytes.NewReader(packet.Data[8:])
+		binary.Read(packetDataBuf, nil, dataBytes)
 
+		header := traceroute.ICMPHeader{
+			Type:        uint8(8),
+			Code:        uint8(0),
+			Checksum:    uint16(0),
+			Identifier:  uint16(0),
+			SequenceNum: uint16(0)}
+		echoMessage := traceroute.Echo{
+			Header: header,
+			Data:   dataBytes}
+
+		bytesArray := &bytes.Buffer{}
+		binary.Write(bytesArray, binary.BigEndian, binary.BigEndian.Uint32(packet.Header.Src.To4()))
+		binary.Write(bytesArray, binary.BigEndian, echoMessage)
+		tr.EchoChan <- bytesArray.Bytes()
 	case ECHO_REPLY:
 		// the destination we are looking for is in fact reachable
 		// and is in the src of the message
 		// send the next hop in the sequence aka the
-		tr.RouteChan <- binary.BigEndian.Uint32(packet.Header.Src.To4())
+		tr.RouteChan <- NextHopMsg{Found: true, NextHop: binary.BigEndian.Uint32(packet.Header.Src.To4())}
 	case TIME_EXCEEDED:
-		tr.RouteChan <- binary.BigEndian.Uint32(packet.Header.Src.To4())
+		// TODO: how to handle if there's no one reading from this channel or
+		// no traceroute command being executed
+		tr.RouteChan <- NextHopMsg{Found: true, NextHop: binary.BigEndian.Uint32(packet.Header.Src.To4())}
 	}
 }
 

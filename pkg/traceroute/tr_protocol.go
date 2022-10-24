@@ -14,11 +14,6 @@ type ICMPHeader struct {
 	SequenceNum uint16
 }
 
-type ICMPMessage struct {
-	Header ICMPHeader
-	Data   []byte
-}
-
 type TimeExceededMessage struct {
 	Header   ICMPHeader
 	IPHeader ipv4.Header // header of the original packet

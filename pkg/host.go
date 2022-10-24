@@ -20,7 +20,8 @@ type Host struct {
 
 	MessageChannel chan []byte // data from the rip handler
 	PacketChannel  chan IPPacket
-	NextHopChan   chan NextHopMsg // this is to pass to the icmp handler to properly communicate with the driver
+	NextHopChannel chan NextHopMsg // this is to pass to the icmp handler to properly communicate with the driver
+	EchoChannel    chan []byte     // data from the traceroute handler
 
 	HandlerRegistry map[int]Handler
 }
@@ -52,17 +53,20 @@ func (h *Host) InitHost() {
 	h.LocalIFs = make(map[uint32]*LinkInterface)
 	h.HandlerRegistry = make(map[int]Handler)
 	h.RemoteDestination = make(map[uint32]uint32)
-	h.NextHopChan = make(chan uint32)
+	h.NextHopChannel = make(chan NextHopMsg)
 }
 
 func (h *Host) CreateEchoPacket() traceroute.Echo {
+	header := traceroute.ICMPHeader{
+		Type:        uint8(8),
+		Code:        uint8(0),
+		Checksum:    uint16(0),
+		Identifier:  uint16(0),
+		SequenceNum: uint16(0),
+	}
 	return traceroute.Echo{
-		Type: 8,
-		Code: 0,
-		Checksum: 0,
-		Identifier: 0,
-		SequenceNumber: 0,
-		Data: []byte("traceroute echo")}
+		Header: header,
+		Data:   []byte("traceroute echo")}
 }
 
 // routine to send the packet
@@ -76,22 +80,22 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 		return []uint32{}
 	}
 
-	// we have the guarantee that the route should exist 
-	// start the ttl at 0 
+	// we have the guarantee that the route should exist
+	// start the ttl at 0
 	currTTL := 1
 	path := make([]uint32, 0)
 	cancelChan := make(chan bool)
-	
-	go func () {
+
+	go func() {
 		for currTTL <= INFINITY {
 			select {
-			case _ = <- cancelChan: 
-				return 
-			default: 
-				break 
+			case _ = <-cancelChan:
+				return
+			default:
+				break
 			}
 			nextHop := entry.NextHop
-	
+
 			// lookup next hop address in remote destination map to find our interface address
 			if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
 				// lookup correct interface from the address to send this packet on
@@ -101,29 +105,35 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 					echoMsg := h.CreateEchoPacket()
 					bytesArray := &bytes.Buffer{}
 					binary.Write(bytesArray, binary.BigEndian, echoMsg)
-					packet := h.CreateIPPacket(addrOfInterface, destAddr, bytesArray.Bytes(), 0, ttlValue)
-	
+					packet := h.CreateIPPacket(addrOfInterface, destAddr, bytesArray.Bytes(), 0, currTTL)
+
 					// make sure we are computing the checksum in this case too
 					checkSum, _ := computeChecksum(packet)
 					packet.Header.Checksum = int(checkSum)
 					localInterface.Send(packet)
 				}
 			}
+			currTTL += 1
 		}
-	} ()
-	
+	}()
+
 	for {
 		select {
-			case nextLoc := <- h.NextHopChan: 
-				path = append(path, nextLoc)
-				if nextLoc == destAddr {
-					cancel
-				}
-			case 
+		case nextLoc := <-h.NextHopChannel:
+			path = append(path, nextLoc.NextHop)
+			if nextLoc.Found {
+				cancelChan <- true
+				return path
+			}
+		case echoMsg := <-h.EchoChannel:
+			destAddr := binary.BigEndian.Uint32(echoMsg[:ADDR_SIZE])
+			dataToSend := echoMsg[ADDR_SIZE:]
+
+			srcAddr := h.RemoteDestination[destAddr]
+			packet := h.CreateIPPacket(srcAddr, destAddr, dataToSend, ICMP, TTL_MAX)
+			h.SendToNeighbor(destAddr, packet)
 		}
 	}
-
-	return 
 }
 
 /*
@@ -336,11 +346,15 @@ func (h *Host) sendICMPTimeExceeded(packet IPPacket) {
 	originalSrc := binary.BigEndian.Uint32(packet.Header.Src.To4())
 
 	// send a packet back to the original host
+	header := traceroute.ICMPHeader{
+		Type:        uint8(header.ICMPv4TimeExceeded),
+		Code:        uint8(0),
+		Checksum:    0, // TODO: add computation for checksum
+		Identifier:  0,
+		SequenceNum: 0,
+	}
 	msg := traceroute.TimeExceededMessage{
-		Type:     uint8(header.ICMPv4TimeExceeded),
-		Code:     uint8(0),
-		Checksum: 0, // TODO: need to add checksum computation
-		Unused:   uint32(0),
+		Header:   header,
 		IPHeader: packet.Header,
 		Data:     packet.Data[0:8]}
 
@@ -371,6 +385,7 @@ func (h *Host) sendICMPTimeExceeded(packet IPPacket) {
 
 /*
 	general "send to link layer" function for a given ip packet
+	this is called when forwarding packets
 */
 func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 
