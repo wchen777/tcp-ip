@@ -20,6 +20,7 @@ type Host struct {
 	PacketChannel  chan IPPacket
 
 	HandlerRegistry map[int]Handler
+	HostConnection  *net.UDPConn
 }
 
 const (
@@ -278,6 +279,41 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
 			localInterface.Send(packet)
 		}
+	}
+}
+
+func (h *Host) ListenOnPort() {
+	for {
+		// Take a look at sync.Cond, sync.WaitGroup
+		// always listening for packets
+		buffer := make([]byte, MTU)
+		bytesRead, udpAddr, err := h.HostConnection.ReadFromUDP(buffer) // TODO: check address of sender ()
+		if err != nil {
+			log.Print(err)
+		}
+
+		if udpAddr.Port != h.UDPDestPort { // we received a packet from an unknown "port", (ports need to be int)
+			log.Printf("dropping packet due to non matching port: received: %d, want: %d", udpAddr.Port, c.UDPDestPort)
+			continue
+		}
+
+		// fmt.Printf("Number of bytes read from link layer connection: %d\n", numBytes)
+
+		// deserialize into IPPacket to return
+		ipPacket := IPPacket{}
+		hdr, _ := ipv4.ParseHeader(buffer)
+		ipPacket.Header = *hdr
+		ipPacket.Data = buffer[hdr.Len:bytesRead]
+
+		// send to network layer from link layer
+		// c.StoppedLock.Lock()
+		// if !c.Stopped {
+		// c.StoppedLock.Unlock()
+		c.IPPacketChannel <- ipPacket
+		// } else {
+		// 	log.Print("stopped is true on this interface")
+		// 	c.StoppedLock.Unlock()
+		// }
 	}
 }
 
