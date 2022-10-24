@@ -54,6 +54,7 @@ func (h *Host) InitHost() {
 	h.HandlerRegistry = make(map[int]Handler)
 	h.RemoteDestination = make(map[uint32]uint32)
 	h.NextHopChannel = make(chan NextHopMsg)
+	h.EchoChannel = make(chan []byte)
 }
 
 func (h *Host) CreateEchoPacket() traceroute.Echo {
@@ -80,20 +81,65 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 		return []uint32{}
 	}
 
+	log.Printf("entry's next hop: %d\n", entry.NextHop)
 	// we have the guarantee that the route should exist
 	// start the ttl at 0
 	currTTL := 1
 	path := make([]uint32, 0)
-	cancelChan := make(chan bool)
 
-	go func() {
-		for currTTL <= INFINITY {
-			select {
-			case _ = <-cancelChan:
-				return
-			default:
-				break
+	for currTTL <= INFINITY {
+		nextHop := entry.NextHop
+
+		// lookup next hop address in remote destination map to find our interface address
+		if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
+			// lookup correct interface from the address to send this packet on
+			if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
+				// create the packet and send to link layer
+				// TODO: not sure what to put for the protocol number when creating these packets
+				echoMsg := h.CreateEchoPacket()
+				bytesArray := &bytes.Buffer{}
+				binary.Write(bytesArray, binary.BigEndian, echoMsg.Header)
+				buf := bytesArray.Bytes()
+				buf = append(buf, echoMsg.Data...)
+
+				packet := h.CreateIPPacket(addrOfInterface, destAddr, buf, 1, currTTL)
+
+				// make sure we are computing the checksum in this case too
+				checkSum, _ := computeChecksum(packet)
+				packet.Header.Checksum = int(checkSum)
+				log.Print("Sending echo packet now!!")
+				localInterface.Send(packet)
 			}
+		}
+
+		// after each message, wait for a response from ICMP handler
+		select {
+		case nextLoc := <-h.NextHopChannel:
+			path = append(path, nextLoc.NextHop)
+			log.Print("finished appending path!!")
+			if nextLoc.Found {
+				return path
+			}
+			break
+		}
+		currTTL += 1
+	}
+	return path
+}
+
+/*
+	Routine for only listening for echo packets to forward
+*/
+func (h *Host) ReadEchoPacket() {
+	for {
+		select {
+		case echoMsg := <-h.EchoChannel:
+			log.Print("reached here to send echo reply!")
+			destAddr := binary.BigEndian.Uint32(echoMsg[:ADDR_SIZE])
+			log.Printf("destination address for echo reply: %d\n", destAddr)
+			dataToSend := echoMsg[ADDR_SIZE:]
+
+			entry := h.RoutingTable.CheckRoute(destAddr)
 			nextHop := entry.NextHop
 
 			// lookup next hop address in remote destination map to find our interface address
@@ -101,11 +147,7 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 				// lookup correct interface from the address to send this packet on
 				if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
 					// create the packet and send to link layer
-					// TODO: not sure what to put for the protocol number when creating these packets
-					echoMsg := h.CreateEchoPacket()
-					bytesArray := &bytes.Buffer{}
-					binary.Write(bytesArray, binary.BigEndian, echoMsg)
-					packet := h.CreateIPPacket(addrOfInterface, destAddr, bytesArray.Bytes(), 0, currTTL)
+					packet := h.CreateIPPacket(addrOfInterface, destAddr, []byte(dataToSend), 1, TTL_MAX)
 
 					// make sure we are computing the checksum in this case too
 					checkSum, _ := computeChecksum(packet)
@@ -113,25 +155,6 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 					localInterface.Send(packet)
 				}
 			}
-			currTTL += 1
-		}
-	}()
-
-	for {
-		select {
-		case nextLoc := <-h.NextHopChannel:
-			path = append(path, nextLoc.NextHop)
-			if nextLoc.Found {
-				cancelChan <- true
-				return path
-			}
-		case echoMsg := <-h.EchoChannel:
-			destAddr := binary.BigEndian.Uint32(echoMsg[:ADDR_SIZE])
-			dataToSend := echoMsg[ADDR_SIZE:]
-
-			srcAddr := h.RemoteDestination[destAddr]
-			packet := h.CreateIPPacket(srcAddr, destAddr, dataToSend, ICMP, TTL_MAX)
-			h.SendToNeighbor(destAddr, packet)
 		}
 	}
 }
@@ -306,6 +329,10 @@ func (h *Host) ReadFromLinkLayer() {
 			if localInterface, exists := h.LocalIFs[destAddr]; exists { // REACHED ITS DESTINATION -- FOR US
 				// This field should only be checked in the event that the packet has reached its destination
 				// call the appropriate handler function, otherwise packet is "dropped"
+				if packet.Header.Protocol == 1 {
+					log.Print("we got here!!!")
+				}
+
 				localInterface.StoppedLock.Lock()
 				if localInterface.Stopped {
 					log.Printf("this local interface is stopped: %d\n", localInterface.HostIPAddress)
@@ -314,7 +341,6 @@ func (h *Host) ReadFromLinkLayer() {
 				} else {
 					localInterface.StoppedLock.Unlock()
 				}
-
 				if handler, exists := h.HandlerRegistry[packet.Header.Protocol]; exists {
 					go handler.ReceivePacket(packet, h.RoutingTable)
 				} else {
@@ -359,7 +385,10 @@ func (h *Host) sendICMPTimeExceeded(packet IPPacket) {
 		Data:     packet.Data[0:8]}
 
 	bytesArray := &bytes.Buffer{}
-	binary.Write(bytesArray, binary.BigEndian, msg)
+	binary.Write(bytesArray, binary.BigEndian, msg.Header)
+	binary.Write(bytesArray, binary.BigEndian, msg.IPHeader)
+	buf := bytesArray.Bytes()
+	buf = append(buf, packet.Data[0:8]...)
 
 	// the next hop to send the packet to
 	entry := h.RoutingTable.CheckRoute(originalSrc)
@@ -374,7 +403,10 @@ func (h *Host) sendICMPTimeExceeded(packet IPPacket) {
 
 	if addrOfInterface, exists := h.RemoteDestination[entry.NextHop]; exists {
 		// addrOfInterface is the new source address
-		packet := h.CreateIPPacket(addrOfInterface, originalSrc, bytesArray.Bytes(), 1, 16)
+		packet := h.CreateIPPacket(addrOfInterface, originalSrc, buf, 1, 16)
+		checkSum, _ := computeChecksum(packet)
+		packet.Header.Checksum = int(checkSum)
+
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
 			localInterface.Send(packet)
 		} else {
@@ -480,4 +512,5 @@ func (h *Host) StartHost() {
 	// start goroutine for read from link layer
 	go h.ReadFromLinkLayer()
 	go h.ReadFromHandler()
+	go h.ReadEchoPacket()
 }

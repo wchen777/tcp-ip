@@ -140,8 +140,6 @@ func traceroute(h *pkg.Host, destAddr string) {
 		return
 	}
 
-	pathToTake := make([]uint32, 0)
-
 	// make a goroutine that will handle this from the host end
 	path := h.SendTraceroutePacket(binary.BigEndian.Uint32(destIPAddr.To4()))
 
@@ -150,13 +148,13 @@ func traceroute(h *pkg.Host, destAddr string) {
 	if len(path) == 0 {
 		fmt.Printf("Traceroute to %s does not exists\n", destAddr)
 	} else {
-		startAddr := path[0]
+		startAddr := h.RemoteDestination[path[0]]
 		fmt.Printf("Traceroute from %s to %s\n", addrNumToIP(startAddr), destAddr)
-		for index, hop := range pathToTake {
+		for index, hop := range path {
 			hopAddr := addrNumToIP(hop)
 			fmt.Printf("%d  %s\n", index+1, hopAddr)
 		}
-		fmt.Printf("Traceroute finished in %d hops\n", len(pathToTake))
+		fmt.Printf("Traceroute finished in %d hops\n", len(path))
 	}
 }
 

@@ -229,7 +229,6 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 	for {
 		select {
 		case <-timer.C:
-			log.Print("Sending updates to neighbors now")
 			// send updates to all neighbors with entries from its routing table
 			for _, neighbor := range r.Neighbors {
 				// get routing table entries specific to a particular neighbor
