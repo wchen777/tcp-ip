@@ -332,9 +332,10 @@ func (h *Host) UpInterface(interfaceNum int) error {
 */
 func (h *Host) StartHost() {
 	// loop through all host interfaces and start goroutine for listen
-	for _, linkIF := range h.LocalIFs {
-		go linkIF.Listen()
-	}
+
+	//for _, linkIF := range h.LocalIFs {
+	//	go linkIF.Listen()
+	//}
 
 	// start goroutine for read from link layer
 	go h.ReadFromLinkLayer()
