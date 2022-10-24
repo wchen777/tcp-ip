@@ -31,11 +31,12 @@ type LinkInterface struct {
 	DestIPAddress   uint32 // this is the addr of the neighbor connected to the interface
 
 	HostConnection  *net.UDPConn
-	DestConnection  *net.UDPConn // this connects from current interface to the immediate link connection interface
 	IPPacketChannel chan IPPacket
 
-	UDPDestPort string
+	UDPDestPort int
 	UDPDestAddr string
+
+	UDPAddr *net.UDPAddr
 
 	Stopped     bool
 	StoppedLock sync.Mutex
@@ -44,15 +45,15 @@ type LinkInterface struct {
 /*
 	initialize connection to host on other side interface
 */
-func (c *LinkInterface) InitializeDestConnection() (err error) {
-	addrString := fmt.Sprintf("%s:%s", c.UDPDestAddr, c.UDPDestPort)
+func (c *LinkInterface) InitializeDestConnection(addr, port string) (err error) {
+	addrString := fmt.Sprintf("%s:%s", addr, port)
 	udpAddr, err := net.ResolveUDPAddr("udp4", addrString)
 
-	UDPConn, err := net.DialUDP("udp4", nil, udpAddr)
 	if err != nil {
 		return
 	}
-	c.DestConnection = UDPConn
+
+	c.UDPAddr = udpAddr
 
 	return
 }
@@ -66,10 +67,15 @@ func (c *LinkInterface) Listen() (err error) {
 		// Take a look at sync.Cond, sync.WaitGroup
 		// always listening for packets
 		buffer := make([]byte, MTU)
-		bytesRead, _, err := c.HostConnection.ReadFromUDP(buffer)
+		bytesRead, udpAddr, err := c.HostConnection.ReadFromUDP(buffer) // TODO: check address of sender ()
 		if err != nil {
 			fmt.Print(err)
 			return err
+		}
+
+		if udpAddr.Port != c.UDPDestPort { // we received a packet from an unknown "port", (ports need to be int)
+			log.Printf("dropping packet due to non matching port: received: %d, want: %d", udpAddr.Port, c.UDPDestPort)
+			continue
 		}
 
 		// fmt.Printf("Number of bytes read from link layer connection: %d\n", numBytes)
@@ -104,11 +110,11 @@ func (c *LinkInterface) Send(ip_packet IPPacket) {
 	}
 	c.StoppedLock.Unlock()
 
-	// serializng IP packet into array of bytes
+	// serializing IP packet into array of bytes
 	bytes, _ := ip_packet.Header.Marshal()
 	bytes = append(bytes, ip_packet.Data...)
 
-	_, _ = c.DestConnection.Write(bytes)
+	_, _ = c.HostConnection.WriteToUDP(bytes, c.UDPAddr)
 
 	return
 }
