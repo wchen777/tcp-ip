@@ -59,14 +59,12 @@ func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
 	entry := h.RoutingTable.CheckRoute(destAddr)
 
 	if entry == nil {
-		// TODO: fix for later
 		return errors.New("Entry doesn't exist")
 	}
 
 	// if the cost of the entry that we're trying to send to is INFINITY, then we return because we can't send
 	if entry.Cost == INFINITY {
-		log.Print("Can't send because cost is infinity")
-		return nil
+		return errors.New("Unable to reach destination")
 	}
 
 	nextHop := entry.NextHop
@@ -264,9 +262,10 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 	// hit routing table to find next hop address
 	entry := h.RoutingTable.CheckRoute(destAddr)
 	if entry == nil {
-		// TODO: check this and why it would be seg faulting
+		log.Printf("Could not find entry in the routing table, dest addr: %d", destAddr)
 		return
 	}
+
 	if entry.Cost == INFINITY {
 		log.Print("Unable to reach destination because of cost infinity")
 		return

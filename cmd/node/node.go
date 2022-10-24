@@ -108,9 +108,7 @@ func sendCommand(h *pkg.Host, line string) {
 	err = h.SendPacket(destAddr, protocolNum, args[3])
 
 	if err != nil {
-		addrNum, _ := strconv.Atoi(err.Error())
-		addr := addrNumToIP(uint32(addrNum))
-		log.Print(fmt.Sprintf("cannot send to %s, it is an unreachable address", addr))
+		log.Print(fmt.Sprintf("Cannot send to %s, it is an unreachable address", ipAddr.String()))
 	}
 }
 
