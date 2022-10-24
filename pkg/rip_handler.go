@@ -239,7 +239,7 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 
 				numEntries := len(entries)
 				newRIPMessage := RIPMessage{}
-				newRIPMessage.Command = 1
+				newRIPMessage.Command = 2
 				newRIPMessage.NumEntries = uint16(numEntries)
 				newRIPMessage.Entries = entries
 
@@ -284,7 +284,7 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 
 		// send to one neighbor
 		newRIPMessage := RIPMessage{}
-		newRIPMessage.Command = 1
+		newRIPMessage.Command = 2
 		newRIPMessage.NumEntries = uint16(len(entriesToSend))
 		newRIPMessage.Entries = entriesToSend
 

@@ -292,12 +292,18 @@ func (h *Host) ListenOnPort() {
 			log.Print(err)
 		}
 
-		if udpAddr.Port != h.UDPDestPort { // we received a packet from an unknown "port", (ports need to be int)
-			log.Printf("dropping packet due to non matching port: received: %d, want: %d", udpAddr.Port, c.UDPDestPort)
-			continue
+		found := false
+		for _, localIF := range h.LocalIFs {
+			if udpAddr.Port == localIF.UDPDestPort { // we received a packet from an unknown "port", (ports need to be int)
+				found = true
+				break
+			}
 		}
 
-		// fmt.Printf("Number of bytes read from link layer connection: %d\n", numBytes)
+		if !found {
+			log.Print("Could not find correct destination port")
+			continue
+		}
 
 		// deserialize into IPPacket to return
 		ipPacket := IPPacket{}
@@ -306,14 +312,7 @@ func (h *Host) ListenOnPort() {
 		ipPacket.Data = buffer[hdr.Len:bytesRead]
 
 		// send to network layer from link layer
-		// c.StoppedLock.Lock()
-		// if !c.Stopped {
-		// c.StoppedLock.Unlock()
-		c.IPPacketChannel <- ipPacket
-		// } else {
-		// 	log.Print("stopped is true on this interface")
-		// 	c.StoppedLock.Unlock()
-		// }
+		h.PacketChannel <- ipPacket
 	}
 }
 
@@ -372,6 +371,7 @@ func (h *Host) StartHost() {
 	//for _, linkIF := range h.LocalIFs {
 	//	go linkIF.Listen()
 	//}
+	go h.ListenOnPort()
 
 	// start goroutine for read from link layer
 	go h.ReadFromLinkLayer()

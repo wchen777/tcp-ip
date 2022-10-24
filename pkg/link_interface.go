@@ -5,8 +5,6 @@ import (
 	"log"
 	"net"
 	"sync"
-
-	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -56,46 +54,6 @@ func (c *LinkInterface) InitializeDestConnection(addr, port string) (err error) 
 	c.UDPAddr = udpAddr
 
 	return
-}
-
-/*
-	Receive an ip packet from the link layer and send it to the ip layer
-*/
-func (c *LinkInterface) Listen() (err error) {
-
-	for {
-		// Take a look at sync.Cond, sync.WaitGroup
-		// always listening for packets
-		buffer := make([]byte, MTU)
-		bytesRead, udpAddr, err := c.HostConnection.ReadFromUDP(buffer) // TODO: check address of sender ()
-		if err != nil {
-			fmt.Print(err)
-			return err
-		}
-
-		if udpAddr.Port != c.UDPDestPort { // we received a packet from an unknown "port", (ports need to be int)
-			log.Printf("dropping packet due to non matching port: received: %d, want: %d", udpAddr.Port, c.UDPDestPort)
-			continue
-		}
-
-		// fmt.Printf("Number of bytes read from link layer connection: %d\n", numBytes)
-
-		// deserialize into IPPacket to return
-		ipPacket := IPPacket{}
-		hdr, _ := ipv4.ParseHeader(buffer)
-		ipPacket.Header = *hdr
-		ipPacket.Data = buffer[hdr.Len:bytesRead]
-
-		// send to network layer from link layer
-		// c.StoppedLock.Lock()
-		// if !c.Stopped {
-		// c.StoppedLock.Unlock()
-		c.IPPacketChannel <- ipPacket
-		// } else {
-		// 	log.Print("stopped is true on this interface")
-		// 	c.StoppedLock.Unlock()
-		// }
-	}
 }
 
 /*

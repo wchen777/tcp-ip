@@ -193,6 +193,7 @@ func main() {
 			// The socket that we will be listening to
 			hostConn = hostSocket
 
+			host.HostConnection = hostSocket
 		} else {
 			// line 2+
 
