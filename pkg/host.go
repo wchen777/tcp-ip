@@ -10,7 +10,6 @@ import (
 	"net"
 
 	"github.com/google/netstack/tcpip/header"
-	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
 
@@ -21,7 +20,7 @@ type Host struct {
 
 	MessageChannel chan []byte // data from the rip handler
 	PacketChannel  chan IPPacket
-	ICMPChannel    chan icmp.Message // this is for when we get an ICMP message on the link interface
+	NextHopChan   chan NextHopMsg // this is to pass to the icmp handler to properly communicate with the driver
 
 	HandlerRegistry map[int]Handler
 }
@@ -53,34 +52,78 @@ func (h *Host) InitHost() {
 	h.LocalIFs = make(map[uint32]*LinkInterface)
 	h.HandlerRegistry = make(map[int]Handler)
 	h.RemoteDestination = make(map[uint32]uint32)
+	h.NextHopChan = make(chan uint32)
+}
+
+func (h *Host) CreateEchoPacket() traceroute.Echo {
+	return traceroute.Echo{
+		Type: 8,
+		Code: 0,
+		Checksum: 0,
+		Identifier: 0,
+		SequenceNumber: 0,
+		Data: []byte("traceroute echo")}
 }
 
 // routine to send the packet
-func (h *Host) SendTraceroutePacket(destAddr uint32, ttlValue int) {
+// list of destinations
+func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 	// I think it's still going to be an IP packet, since the TTL value needs
 	// to be checked
 	entry := h.RoutingTable.CheckRoute(destAddr)
 	if entry == nil {
-		// TODO: what to return?
-		return
+		// sending empty list back to the driver
+		return []uint32{}
 	}
 
-	nextHop := entry.NextHop
-
-	// lookup next hop address in remote destination map to find our interface address
-	if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
-		// lookup correct interface from the address to send this packet on
-		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
-			// create the packet and send to link layer
-			// TODO: not sure what to put for the protocol number when creating these packets
-			packet := h.CreateIPPacket(addrOfInterface, destAddr, []byte("traceroute"), 0, ttlValue)
-
-			// make sure we are computing the checksum in this case too
-			checkSum, _ := computeChecksum(packet)
-			packet.Header.Checksum = int(checkSum)
-			localInterface.Send(packet)
+	// we have the guarantee that the route should exist 
+	// start the ttl at 0 
+	currTTL := 1
+	path := make([]uint32, 0)
+	cancelChan := make(chan bool)
+	
+	go func () {
+		for currTTL <= INFINITY {
+			select {
+			case _ = <- cancelChan: 
+				return 
+			default: 
+				break 
+			}
+			nextHop := entry.NextHop
+	
+			// lookup next hop address in remote destination map to find our interface address
+			if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
+				// lookup correct interface from the address to send this packet on
+				if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
+					// create the packet and send to link layer
+					// TODO: not sure what to put for the protocol number when creating these packets
+					echoMsg := h.CreateEchoPacket()
+					bytesArray := &bytes.Buffer{}
+					binary.Write(bytesArray, binary.BigEndian, echoMsg)
+					packet := h.CreateIPPacket(addrOfInterface, destAddr, bytesArray.Bytes(), 0, ttlValue)
+	
+					// make sure we are computing the checksum in this case too
+					checkSum, _ := computeChecksum(packet)
+					packet.Header.Checksum = int(checkSum)
+					localInterface.Send(packet)
+				}
+			}
+		}
+	} ()
+	
+	for {
+		select {
+			case nextLoc := <- h.NextHopChan: 
+				path = append(path, nextLoc)
+				if nextLoc == destAddr {
+					cancel
+				}
+			case 
 		}
 	}
+
+	return 
 }
 
 /*
@@ -242,15 +285,8 @@ func (h *Host) ReadFromLinkLayer() {
 				continue
 			}
 
-			// TTL --> if the `TTL == 0`, then the packet should be dropped
-			if packet.Header.TTL == 0 {
-				log.Print("Dropping packet: TTL == 0")
-				log.Print("Sending time exceeded back to the src")
-
-				// call the function that will send time limit exceeded
-				go h.sendICMPTimeExceeded(packet)
-				continue
-			}
+			// decrement TTL
+			packet.Header.TTL -= 1
 
 			// Destination address --> if it's the node itself, the packet doesn't need to be forwarded,
 			// and if the packet matches a network in the forwarding table, it should be sent on that interface.
@@ -275,8 +311,15 @@ func (h *Host) ReadFromLinkLayer() {
 					log.Print("Dropping packet: handler protocol not registered")
 				}
 			} else { // FORWARD THE PACKET
-				// decrement TTL
-				packet.Header.TTL -= 1
+				// TTL --> if the `TTL == 0`, then the packet should be dropped
+				if packet.Header.TTL == 0 {
+					log.Print("Dropping packet: TTL == 0")
+					log.Print("Sending time exceeded back to the src")
+
+					// call the function that will send time limit exceeded
+					go h.sendICMPTimeExceeded(packet)
+					continue
+				}
 
 				// recompute checksum, look up where the packet needs to be sent, forward packet
 				go h.SendToLinkLayer(destAddr, packet)

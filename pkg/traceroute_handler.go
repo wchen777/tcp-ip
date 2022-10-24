@@ -1,17 +1,52 @@
 package pkg
 
+import (
+	"bytes"
+	"encoding/binary"
+	"ip/pkg/traceroute"
+)
+
+const (
+	ECHO          = 8
+	ECHO_REPLY    = 0
+	TIME_EXCEEDED = 11
+)
+
+type NextHopMsg struct {
+	Done    bool
+	NextHop uint32
+}
+
+type TracerouteHandler struct {
+	RouteChan chan NextHopMsg
+	EchoChan  chan traceroute.Echo
+}
+
 // routine for when we receive something from the host
-func ReceivePacket(packet IPPacket, data interface{}) {
-	// would we get back an IP packet??
-	// just pass data through the interface maybe
-	// rather than through the packet
+func (tr *TracerouteHandler) ReceivePacket(packet IPPacket, data interface{}) {
+	// what we do when we receive an ICMP message
+	// deserialize the packet data
+	var typeMsg uint8
+
+	// create a buffer for the first byte of data
+	packetDataBuf := bytes.NewReader(packet.Data[0:1])
+	binary.Read(packetDataBuf, binary.BigEndian, &typeMsg)
+
+	switch typeMsg {
+	case ECHO:
+		// we have reached our destination and we should ask the host to
+		// send a message back to the host to send an echo reply back to the src in the echo message
+
+	case ECHO_REPLY:
+		// the destination we are looking for is in fact reachable
+		// and is in the src of the message
+		// send the next hop in the sequence aka the
+		tr.RouteChan <- binary.BigEndian.Uint32(packet.Header.Src.To4())
+	case TIME_EXCEEDED:
+		tr.RouteChan <- binary.BigEndian.Uint32(packet.Header.Src.To4())
+	}
 }
 
-func InitHandler(data []interface{}) {
-
+func (tr *TracerouteHandler) InitHandler(data []interface{}) {
+	return
 }
-
-// created a routine that will interface with the host
-// func SendTraceroutePacket(ttlValue int) {
-// 	h.SendPacket()
-// }

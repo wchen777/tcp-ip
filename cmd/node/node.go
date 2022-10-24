@@ -17,6 +17,7 @@ import (
 const (
 	RIP_PROTOCOL  = 200
 	TEST_PROTOCOL = 0
+	ICMP_PROTOCOL = 1
 )
 
 func InitRoutingTable(localIFs map[uint32]*pkg.LinkInterface) *pkg.RoutingTable {
@@ -30,6 +31,10 @@ func InitRoutingTable(localIFs map[uint32]*pkg.LinkInterface) *pkg.RoutingTable 
 
 func NewRipHandler(msgChan chan []byte) pkg.Handler {
 	return &pkg.RipHandler{MessageChan: msgChan}
+}
+
+func NewTracerouteHandler(msgChan chan []uint32) pkg.Handler {
+	return &pkg.TracerouteHandler{RouteChan: msgChan}
 }
 
 func NewTestHandler() pkg.Handler {
@@ -137,55 +142,22 @@ func traceroute(h *pkg.Host, destAddr string) {
 
 	pathToTake := make([]uint32, 0)
 
-	// maybe have some sort of channel that 
-	timeExceededMsgChan := make(chan uint32 )
-	currTTL := 0
-	found := false 
+	// make a goroutine that will handle this from the host end
+	path := h.SendTraceroutePacket(binary.BigEndian.Uint32(destIPAddr.To4()))
 
-	for currTTL <= 16 && !found {
-		// send a packet 
-		h.SendPacket(destAddr, 10, "traceroute")
-		select {
-		case <- timeExceededMsgChan: 
-			// perhaps check to see if the message received had the correct destination 
-			// and if did we terminate, otherwise we need to keep going 
-			if () {
-				// means destination is valid 
-				// add to the pathToTake 
-				pathToTake := append()
-				if () {
-					// used to break out of the while loop 
-					found = true 
-					break
-				}
-			} else {
-				fmt.Printf("Host is unreachable or does not exist in the network")
-				return 
-			}
-		}
-		// increment TTL everytime we send 
-		currTTL++
-	}
-	
-
-	// once we have the first path
-	// need to determine which interface the message from the host was sent from
-	firstHop := pathToTake[0]
-	var startAddr string
-	if localIFAddr, exists := h.RemoteDestination[firstHop]; exists {
-		startAddr = addrNumToIP(localIFAddr)
+	// wait on a channel that should return the path
+	// the channel data should be sent from the handler
+	if len(path) == 0 {
+		fmt.Printf("Traceroute to %s does not exists\n", destAddr)
 	} else {
-		// we should not get to this case
-		log.Printf("Starting address doesn't exist on host")
-		return
+		startAddr := path[0]
+		fmt.Printf("Traceroute from %s to %s\n", startAddr, destAddr)
+		for index, hop := range pathToTake {
+			hopAddr := addrNumToIP(hop)
+			fmt.Printf("%d  %s\n", index+1, hopAddr)
+		}
+		fmt.Printf("Traceroute finished in %d hops\n", len(pathToTake))
 	}
-
-	fmt.Printf("Traceroute from %s to %s\n", startAddr, destAddr)
-	for index, hop := range pathToTake {
-		hopAddr := addrNumToIP(hop)
-		fmt.Printf("%d %s\n", index+1, hopAddr)
-	}
-	fmt.Printf("Traceroute finished in %d hops\n", len(pathToTake))
 }
 
 // where everything should be initialized
@@ -293,9 +265,12 @@ func main() {
 	testHandler := NewTestHandler()
 	testHandler.InitHandler(nil)
 
-	log.Print(host.RoutingTable.Table)
+	// initialize the traceroute handler, pass in the channel to be used
+	tracerouteHandler := NewTracerouteHandler(host.ICMPChannel)
+
 	host.RegisterHandler(RIP_PROTOCOL, ripHandler) //
 	host.RegisterHandler(TEST_PROTOCOL, testHandler)
+	host.RegisterHandler(ICMP_PROTOCOL, tracerouteHandler)
 
 	dataForHandler := make([]interface{}, 0)
 	// sending both the routingTable and the RemoteDestinations as that contains the neighbors
