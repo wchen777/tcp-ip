@@ -1,7 +1,6 @@
 package pkg
 
 import (
-	"log"
 	"sync"
 )
 
@@ -61,7 +60,7 @@ func (rt *RoutingTable) AddRoute(dest uint32, cost uint32, nextHop uint32, updat
 func (rt *RoutingTable) RemoveNextHops(nextHops []uint32) {
 	rt.TableLock.Lock()
 	defer rt.TableLock.Unlock()
-	log.Print("pls be here")
+	// log.Print("pls be here")
 
 	for dest, entry := range rt.Table {
 		for _, nh := range nextHops {

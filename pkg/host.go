@@ -461,6 +461,7 @@ func (h *Host) ListenOnPort() {
 		bytesRead, udpAddr, err := h.HostConnection.ReadFromUDP(buffer) // TODO: check address of sender ()
 		if err != nil {
 			log.Print(err)
+			return
 		}
 
 		found := false
@@ -503,7 +504,7 @@ func (h *Host) DownInterface(interfaceNum int) error {
 			// remove any entry that should go through the this interface
 			neighbor := interf.DestIPAddress
 			h.RoutingTable.RemoveNextHops([]uint32{interf.HostIPAddress, neighbor})
-			log.Printf("interface %d is now down", interfaceNum)
+			// log.Printf("interface %d is now down", interfaceNum)
 			return nil
 		}
 	}
