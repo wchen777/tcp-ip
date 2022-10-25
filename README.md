@@ -36,7 +36,7 @@ Upon receiving an IP packet from an interface on the host's UDP port, we:
     - if we reached this point, we are good to send consult the routing table for the correct next hop and process the packet on the correct interface
 
 ## Known bugs 
-We hope none at the moment.
+We hope none at the moment. There's a bit of weirdness when running with the reference node and one of the node is quit, there's an entry is that might be printed with a cost of 17, which means that an entry with 16 is sent and it's updated when entries of 16 shouldn't be forwarded. 
 
 ## Design Decisions 
 We chose to have one UDP connection per host, and then reused this connection for all the interfaces when sending to destinations as well as listening for incoming messages. The host would have one goroutine to listen on the interface for incoming messages.
