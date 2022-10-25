@@ -304,7 +304,7 @@ func (r *RipHandler) waitForUpdates(newEntryAddress uint32, nextHop uint32, upda
 			}
 		case <-timeout:
 			// If we have reached the timeout case, then we should remove the entry and return
-			log.Printf("timeout: %d", newEntryAddress)
+			// log.Printf("timeout: %d", newEntryAddress)
 			// table.RemoveRoute(newEntryAddress)
 			table.UpdateRoute(newEntryAddress, 16, nextHop)
 			// TODO: this is where we add triggered updates
