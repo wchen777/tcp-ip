@@ -147,7 +147,7 @@ func traceroute(h *pkg.Host, destAddr string) {
 	// wait on a channel that should return the path
 	// the channel data should be sent from the handler
 	if len(path) == 0 {
-		fmt.Printf("Traceroute to %s does not exists\n", destAddr)
+		fmt.Printf("Traceroute to %s does not exist\n", destAddr)
 	} else {
 		startAddr := h.RemoteDestination[path[0]]
 		fmt.Printf("Traceroute from %s to %s\n", addrNumToIP(startAddr), destAddr)

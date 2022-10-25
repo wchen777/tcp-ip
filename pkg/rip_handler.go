@@ -75,11 +75,11 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 
 			// If existing entry <D, C_old, M>
 			if (newEntry.Cost+1 < oldEntry.Cost) || (newEntry.Cost+1 > oldEntry.Cost && oldEntry.NextHop == nextHop) {
-				log.Print("updating existing entry")
-				log.Printf("new entry cost: %d\n", newEntry.Cost)
-				log.Printf("old entry cost: %d\n", oldEntry.Cost)
-				log.Printf("new next hop: %d\n", nextHop)
-				log.Printf("old next hop: %d\n", oldEntry.NextHop)
+				// log.Print("updating existing entry")
+				// log.Printf("new entry cost: %d\n", newEntry.Cost)
+				// log.Printf("old entry cost: %d\n", oldEntry.Cost)
+				// log.Printf("new next hop: %d\n", nextHop)
+				// log.Printf("old next hop: %d\n", oldEntry.NextHop)
 				// if C < C_old, update table <D, C, N> --> found better route
 				// if C > C_old and N == M, update table <D, C, M> --> increased cost
 
@@ -313,4 +313,12 @@ func (r *RipHandler) waitForUpdates(newEntryAddress uint32, nextHop uint32, upda
 			timeout = time.After(time.Duration(TIMEOUT * time.Second))
 		}
 	}
+}
+
+func (r *RipHandler) AddChanRoutine() {
+	return
+}
+
+func (r *RipHandler) RemoveChanRoutine() {
+	return
 }

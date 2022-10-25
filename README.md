@@ -8,19 +8,18 @@
 ## Threads and RIP protocol 
 
 ### Threads
-
 These goroutines are called in `StartHost`:
 - Go routine that is listening for packets on the host through the UDP protocol
 - Go routine on the host that is listening for to-be-sent messages from the RIP handler, which is then sent through the correct interface
 
 We also have a goroutine when we process a packet for a handler (`ReceivePacket`) (so that it doesn't block the calling thread).
 
-
-
-
 ### RIP Protocol
-
-
+- Each time an entry is added to the routing table, a goroutine is created that will wait for updates on that particular entry and there is a timer. And when an update notification is received through a channel, the timer is reset. 
+- And in the case a timeout is reached, the table is updated to have a cost of 16 and the timer is reset as well. 
+- If the entry already exists in the routing table, it is determined if it needs to be updated in the routing table, and if it needs to be updated, then the entry is updated to the routing table and added to a list. 
+- After iterating through all of the entries, a goroutine is created that will send all the updated entries to all the neighbors. 
+- Separately from all of this is a goroutine that is running asynchronously that will every five seconds, send an update to the neighbors and once a RIP message has been created, it will send that message through a channel to the host. 
 
 ## Steps on receiving an IP Packet 
 Upon receiving an IP packet from an interface on the host's UDP port, we:
@@ -38,11 +37,9 @@ Upon receiving an IP packet from an interface on the host's UDP port, we:
 We hope none at the moment.
 
 ## Design Decisions 
-
 We chose to have one UDP connection per host, and then reused this connection for all the interfaces when sending to destinations as well as listening for incoming messages. The host would have one goroutine to listen on the interface for incoming messages.
 
 When registering handlers, we have an generic `InitHandler()` function that takes in generic data to set up the respective handler. For RIP, this means that we need to pass in the routing table, the host's interfaces, and the host's neighbors so that the RIP handler would have access to this information.
-
 
 For communication between the different layers, we added a couple different channels. 
 The has a channel to: 
@@ -51,7 +48,17 @@ The has a channel to:
 - receive bytes of data from the rip handler to create an IP packet to send to the link layer. This channel will be used when the RIP protocol periodically sends updates every five seconds or for triggered updates. The host will propogate data received to the RIP handler by passing it to the ReceivePacket routine that is part of each protocol handler. 
 
 ## Traceroute 
+Added two different ICMP messages: 
+- Echo --> this is used to ping the hosts with incrementing TTLs until an echo reply is sent back indicating that the route has finished 
+- Time exceeded --> this is used to let the thread running traceroute know the next hop in the sequence 
+I added an additional handler that will process the different ICMP messages and handle them accordingly. Implemented by adding an additional handler, which would process the ICMP messages and handle them accordingly. 
+    - Echo reply --> means that traceroute has found a destination and that information should be propogated to the host thread that is waiting for a response 
+    - Echo --> means that we've reached the destination from a source that initiated traceroute and that from this host, a echo reply message shouldn't be sent back to the source 
+    - Time limit exceeded message --> the host that initiated the traceroute found the next step in the route and can add that to the paths 
 
+Added the traceroute to the CLI, which can be ran by invoking `traceroute dest` where dest is the IP address of the desired destination. This will invoke a routine in the host, and the host will initiate the protocol by sending echo packets of increasing TTL and after sending each packet will wait for a response. This is assuming that none of the packets will be dropped. Before sending the packets, the destination address is first checked if it's reachable, if it's unreachable, an empty list is returned. 
+
+The handler also has an additional AddChanRoutine and RemoveChanRoutine, which is used such that in the case that a time limit exceeded message is received but it wasn't due to a traceroute command that the routine doesn't hang or block. 
 
 ## To run
 We developed this project in the container environment. 

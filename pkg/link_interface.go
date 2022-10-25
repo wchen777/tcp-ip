@@ -2,7 +2,6 @@ package pkg
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
 )
@@ -63,7 +62,7 @@ func (c *LinkInterface) Send(ip_packet IPPacket) {
 	c.StoppedLock.Lock()
 	if c.Stopped {
 		c.StoppedLock.Unlock()
-		log.Printf("blocked sending for this addr: %d\n", c.HostIPAddress)
+		// log.Printf("blocked sending for this addr: %d\n", c.HostIPAddress)
 		return
 	}
 	c.StoppedLock.Unlock()

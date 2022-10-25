@@ -38,3 +38,11 @@ func (t *TestHandler) InitHandler(data []interface{}) {
 	t.w.Init(os.Stdout, 16, 10, 4, ' ', 0)
 	return
 }
+
+func (t *TestHandler) AddChanRoutine() {
+	return
+}
+
+func (t *TestHandler) RemoveChanRoutine() {
+	return
+}

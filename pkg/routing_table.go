@@ -66,7 +66,6 @@ func (rt *RoutingTable) RemoveNextHops(nextHops []uint32) {
 	for dest, entry := range rt.Table {
 		for _, nh := range nextHops {
 			if nh == entry.NextHop {
-				log.Print("we got here!")
 				rt.Table[dest].Cost = INFINITY
 			}
 		}
