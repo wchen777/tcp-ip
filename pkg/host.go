@@ -460,7 +460,7 @@ func (h *Host) ListenOnPort() {
 		buffer := make([]byte, MTU)
 		bytesRead, udpAddr, err := h.HostConnection.ReadFromUDP(buffer) // TODO: check address of sender ()
 		if err != nil {
-			log.Print(err)
+			// log.Print(err)
 			return
 		}
 
