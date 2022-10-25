@@ -66,6 +66,10 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 
 			// log.Printf("old entry's next hop: %d\n", oldEntry.NextHop)
 			// log.Printf("next hop: %d\n", nextHop)
+			if newEntry.Cost == INFINITY {
+				// added check for compatibility with reference node
+				continue
+			}
 
 			// If existing entry <D, C_old, M>
 			if (newEntry.Cost+1 < oldEntry.Cost) || (newEntry.Cost+1 > oldEntry.Cost && oldEntry.NextHop == nextHop) {
