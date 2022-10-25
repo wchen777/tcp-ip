@@ -8,6 +8,7 @@ import (
 	"ip/pkg/traceroute"
 	"log"
 	"net"
+	"os"
 
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
@@ -23,8 +24,10 @@ type Host struct {
 	NextHopChannel chan NextHopMsg // this is to pass to the icmp handler to properly communicate with the driver
 	EchoChannel    chan []byte     // data from the traceroute handler
 
-	HandlerRegistry map[int]Handler
-	HostConnection  *net.UDPConn
+	HandlerRegistry map[int]Handler // registered handlers
+	HostConnection  *net.UDPConn    // listener and sending on host's udp port
+
+	CancelChannel chan bool // bool channel for cancelling upon q command
 }
 
 const (
@@ -56,6 +59,7 @@ func (h *Host) InitHost() {
 	h.RemoteDestination = make(map[uint32]uint32)
 	h.NextHopChannel = make(chan NextHopMsg)
 	h.EchoChannel = make(chan []byte)
+	h.CancelChannel = make(chan bool, 1) // unbuffered channel, unblocking send
 }
 
 func (h *Host) CreateEchoPacket() traceroute.Echo {
@@ -200,7 +204,12 @@ func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
 			packet := h.CreateIPPacket(addrOfInterface, destAddr, []byte(data), 0, TTL_MAX)
 
 			// make sure we are computing the checksum in this case too
-			checkSum, _ := computeChecksum(packet)
+			checkSum, err := computeChecksum(packet)
+			if err != nil {
+				log.Printf("Marshalling failed during compute checksum: %s, dropping packet", err.Error())
+				return err
+			}
+
 			packet.Header.Checksum = int(checkSum)
 			localInterface.Send(packet)
 		}
@@ -246,8 +255,6 @@ func (h *Host) SendToNeighbor(dest uint32, packet IPPacket) {
 	This will read from the message channel for the rip handler and send the messages
 */
 func (h *Host) ReadFromHandler() {
-	// TODO: figure out how to make this more generalizable
-	//       in the event that there are other handlers
 	for {
 		select {
 		case data := <-h.MessageChannel:
@@ -454,14 +461,25 @@ func (h *Host) SendToLinkLayer(destAddr uint32, packet IPPacket) {
 }
 
 func (h *Host) ListenOnPort() {
-	for {
+
+	for { // run loop continuously, always listening for packets
 		// Take a look at sync.Cond, sync.WaitGroup
-		// always listening for packets
+
 		buffer := make([]byte, MTU)
-		bytesRead, udpAddr, err := h.HostConnection.ReadFromUDP(buffer) // TODO: check address of sender ()
-		if err != nil {
-			// log.Print(err)
-			return
+		bytesRead, udpAddr, err := h.HostConnection.ReadFromUDP(buffer)
+
+		select {
+		case cancel := <-h.CancelChannel: // graceful exit
+			if cancel {
+				return // break out the for loop, which will close the conn
+			}
+		default: // keep going if we don't have any cancel messages
+			break
+		}
+
+		if err != nil { // if we receive an error from read from udp, something is wrong with our conn, so exit ungracefully
+			log.Print(err)
+			os.Exit(1)
 		}
 
 		found := false
@@ -488,7 +506,9 @@ func (h *Host) ListenOnPort() {
 	}
 }
 
-// functions to down a specific hosts interface
+/*
+	down a specific hosts interface
+*/
 func (h *Host) DownInterface(interfaceNum int) error {
 
 	for _, interf := range h.LocalIFs {
@@ -504,7 +524,7 @@ func (h *Host) DownInterface(interfaceNum int) error {
 			// remove any entry that should go through the this interface
 			neighbor := interf.DestIPAddress
 			h.RoutingTable.RemoveNextHops([]uint32{interf.HostIPAddress, neighbor})
-			// log.Printf("interface %d is now down", interfaceNum)
+			log.Printf("interface %d is now down", interfaceNum)
 			return nil
 		}
 	}
@@ -512,7 +532,9 @@ func (h *Host) DownInterface(interfaceNum int) error {
 	return errors.New("could not find interface associated with this number")
 }
 
-// functions to up a specific host interface
+/*
+	functions to up a specific host interface
+*/
 func (h *Host) UpInterface(interfaceNum int) error {
 	for _, interf := range h.LocalIFs {
 		if interf.InterfaceNumber == interfaceNum {
@@ -521,8 +543,8 @@ func (h *Host) UpInterface(interfaceNum int) error {
 			}
 			interf.Enable()
 
-			// update the routing table with ourself first
-			// the periodic updates function should propogate this entry
+			// update the routing table with ourselves first
+			// the periodic updates function should propagate this entry
 			h.RoutingTable.TableLock.Lock()
 			h.RoutingTable.Table[interf.HostIPAddress] = h.RoutingTable.CreateEntry(interf.HostIPAddress, 0)
 			h.RoutingTable.TableLock.Unlock()
@@ -532,6 +554,13 @@ func (h *Host) UpInterface(interfaceNum int) error {
 		}
 	}
 	return errors.New("could not find interface associated with this number")
+}
+
+/*
+	stop listening on the host, clean up conn resources
+*/
+func (h *Host) CancelHost() {
+	h.CancelChannel <- true
 }
 
 /*

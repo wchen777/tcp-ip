@@ -120,14 +120,9 @@ func sendCommand(h *pkg.Host, line string) {
 /*
 	q command to quit out of REPL and clean up UDP sending connections
 */
-func quit(hConn *net.UDPConn) {
-	err := hConn.Close()
-
-	if err != nil {
-		log.Print("could not close host udp conn")
-		os.Exit(1)
-	}
-
+func quit(h *pkg.Host) {
+	h.CancelHost()
+	h.HostConnection.Close()
 	os.Exit(0)
 }
 
@@ -371,7 +366,7 @@ func main() {
 				log.Print("Invalid number of arguments for q")
 				break
 			}
-			quit(hostConn)
+			quit(&host)
 		case "traceroute":
 			if len(commands) != 2 {
 				log.Print("Invalid number of arguments for traceroute")
