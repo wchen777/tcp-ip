@@ -17,6 +17,7 @@ import (
 const (
 	RIP_PROTOCOL  = 200
 	TEST_PROTOCOL = 0
+	ICMP_PROTOCOL = 1
 )
 
 func InitRoutingTable(localIFs map[uint32]*pkg.LinkInterface) *pkg.RoutingTable {
@@ -30,6 +31,10 @@ func InitRoutingTable(localIFs map[uint32]*pkg.LinkInterface) *pkg.RoutingTable 
 
 func NewRipHandler(msgChan chan []byte) pkg.Handler {
 	return &pkg.RipHandler{MessageChan: msgChan}
+}
+
+func NewTracerouteHandler(nextHopMsg chan pkg.NextHopMsg, echoChan chan []byte) pkg.Handler {
+	return &pkg.TracerouteHandler{RouteChan: nextHopMsg, EchoChan: echoChan}
 }
 
 func NewTestHandler() pkg.Handler {
@@ -136,6 +141,22 @@ func traceroute(h *pkg.Host, destAddr string) {
 		return
 	}
 
+	// make a goroutine that will handle this from the host end
+	path := h.SendTraceroutePacket(binary.BigEndian.Uint32(destIPAddr.To4()))
+
+	// wait on a channel that should return the path
+	// the channel data should be sent from the handler
+	if len(path) == 0 {
+		fmt.Printf("Traceroute to %s does not exist\n", destAddr)
+	} else {
+		startAddr := h.RemoteDestination[path[0]]
+		fmt.Printf("Traceroute from %s to %s\n", addrNumToIP(startAddr), destAddr)
+		for index, hop := range path {
+			hopAddr := addrNumToIP(hop)
+			fmt.Printf("%d  %s\n", index+1, hopAddr)
+		}
+		fmt.Printf("Traceroute finished in %d hops\n", len(path))
+	}
 }
 
 // where everything should be initialized
@@ -252,9 +273,12 @@ func main() {
 	testHandler := NewTestHandler()
 	testHandler.InitHandler(nil)
 
-	log.Print(host.RoutingTable.Table)
+	// initialize the traceroute handler, pass in the channel to be used
+	tracerouteHandler := NewTracerouteHandler(host.NextHopChannel, host.EchoChannel)
+
 	host.RegisterHandler(RIP_PROTOCOL, ripHandler) //
 	host.RegisterHandler(TEST_PROTOCOL, testHandler)
+	host.RegisterHandler(ICMP_PROTOCOL, tracerouteHandler)
 
 	dataForHandler := make([]interface{}, 0)
 	// sending both the routingTable and the RemoteDestinations as that contains the neighbors
@@ -353,7 +377,7 @@ func main() {
 				log.Print("Invalid number of arguments for traceroute")
 				break
 			}
-
+			traceroute(&host, commands[1])
 		default:
 			printHelp(w)
 			w.Flush()

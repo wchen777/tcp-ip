@@ -215,7 +215,7 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 			for _, neighbor := range r.Neighbors {
 				// get routing table entries specific to a particular neighbor
 				// the cost needs to be poisoned with INFINITY
-
+				// log.Printf("new entry address: %s\n", net.IPv4(byte(neighbor>>24), byte(neighbor>>16), byte(neighbor>>8), byte(neighbor)).String())
 				// TODO: decide if the rest of this code here should be a go routine or not
 				entries := r.GetSpecificEntries(table, neighbor)
 
@@ -250,7 +250,7 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 		for i, entry := range entriesToSend {
 			newEntry := table.CheckRoute(entry.Address)
 			if newEntry == nil {
-				// log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
+				log.Printf("could not find entry in table w/ address: %v\n", entry.Address)
 			} else if newEntry.NextHop == neighbor {
 				// if the new entry's next hop is the neighbor that
 				// we are sending the new updates to, then we should set the cost to be infinity
@@ -280,7 +280,7 @@ func (r *RipHandler) SendTriggeredUpdates(entriesToSend []RIPEntry, table *Routi
 // works with two channels: timeout channel which waits for 12 seconds
 func (r *RipHandler) waitForUpdates(newEntryAddress uint32, nextHop uint32, updateChan chan bool, table *RoutingTable) {
 
-	timeout := time.After(time.Duration(TIMEOUT * time.Second))
+	timeout := time.After(time.Duration(20 * time.Second))
 	for {
 		select {
 		case update := <-updateChan:
@@ -296,4 +296,12 @@ func (r *RipHandler) waitForUpdates(newEntryAddress uint32, nextHop uint32, upda
 			timeout = time.After(time.Duration(TIMEOUT * time.Second))
 		}
 	}
+}
+
+func (r *RipHandler) AddChanRoutine() {
+	return
+}
+
+func (r *RipHandler) RemoveChanRoutine() {
+	return
 }
