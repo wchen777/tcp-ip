@@ -24,8 +24,6 @@ type TracerouteHandler struct {
 }
 
 func (tr *TracerouteHandler) SendToRouteChan(packet IPPacket) {
-	// TODO: how to handle if there's no one reading from this channel or
-	// no traceroute command being executed
 	tr.RouteChan <- NextHopMsg{Found: false, NextHop: binary.BigEndian.Uint32(packet.Header.Src.To4())}
 }
 
@@ -77,11 +75,8 @@ func (tr *TracerouteHandler) ReceivePacket(packet IPPacket, data interface{}) {
 		// the destination we are looking for is in fact reachable
 		// and is in the src of the message
 		// send the next hop in the sequence aka the
-		// log.Print("reached echo reply")
 		tr.RouteChan <- NextHopMsg{Found: true, NextHop: binary.BigEndian.Uint32(packet.Header.Src.To4())}
 	case TIME_EXCEEDED:
-		// log.Print("reached time limit exceeded case")
-		// TODO: how to handle if there's no one reading from this channel or
 		// no traceroute command being executed
 		if tr.HandleRoute != nil {
 			tr.RouteChan <- NextHopMsg{Found: false, NextHop: binary.BigEndian.Uint32(packet.Header.Src.To4())}

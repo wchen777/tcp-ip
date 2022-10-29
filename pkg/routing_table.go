@@ -5,8 +5,6 @@ import (
 )
 
 // Contains a mapping from the ip address (of the destination) to a link interfacce
-// TODO: should the link interface should correspond to the destination or the src?
-//       maybe we can have a struct that also contains the cost or encode it into the link interface
 type RoutingTableEntry struct {
 	NextHop    uint32
 	Cost       uint32

@@ -10,7 +10,7 @@ import (
 type RipHandler struct {
 	MessageChan   chan []byte
 	Neighbors     []uint32
-	OwnInterfaces map[uint32]*LinkInterface // TODO: temp solution
+	OwnInterfaces map[uint32]*LinkInterface
 }
 
 const (
@@ -219,8 +219,6 @@ func (r *RipHandler) SendUpdatesToNeighbors(table *RoutingTable) {
 			for _, neighbor := range r.Neighbors {
 				// get routing table entries specific to a particular neighbor
 				// the cost needs to be poisoned with INFINITY
-				// log.Printf("new entry address: %s\n", net.IPv4(byte(neighbor>>24), byte(neighbor>>16), byte(neighbor>>8), byte(neighbor)).String())
-				// TODO: decide if the rest of this code here should be a go routine or not
 				entries := r.GetSpecificEntries(table, neighbor)
 
 				numEntries := len(entries)

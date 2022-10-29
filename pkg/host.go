@@ -101,7 +101,6 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 			// lookup correct interface from the address to send this packet on
 			if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
 				// create the packet and send to link layer
-				// TODO: not sure what to put for the protocol number when creating these packets
 				echoMsg := h.CreateEchoPacket()
 				bytesArray := &bytes.Buffer{}
 				binary.Write(bytesArray, binary.BigEndian, echoMsg.Header)
@@ -113,7 +112,6 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 				// make sure we are computing the checksum in this case too
 				checkSum, _ := computeChecksum(packet)
 				packet.Header.Checksum = int(checkSum)
-				// log.Print("Sending echo packet now!!")
 				localInterface.Send(packet)
 			}
 		}
@@ -122,7 +120,6 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 		select {
 		case nextLoc := <-h.NextHopChannel:
 			path = append(path, nextLoc.NextHop)
-			// log.Print("finished appending path!!")
 			if nextLoc.Found {
 				h.HandlerRegistry[ICMP].RemoveChanRoutine()
 				return path
