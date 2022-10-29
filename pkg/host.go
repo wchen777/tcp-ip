@@ -43,7 +43,6 @@ func computeChecksum(packet IPPacket) (uint16, error) {
 	packet.Header.Checksum = 0
 	headerBytes, err := packet.Header.Marshal()
 	if err != nil {
-		// TODO: make sure that we are error checking the return value
 		log.Print("Dropping packet because marshalling packet failed")
 		return 0, err
 	}
@@ -110,7 +109,11 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 				packet := h.CreateIPPacket(addrOfInterface, destAddr, buf, 1, currTTL)
 
 				// make sure we are computing the checksum in this case too
-				checkSum, _ := computeChecksum(packet)
+				checkSum, err := computeChecksum(packet)
+				if err != nil {
+					log.Print(err)
+					return []uint32{}
+				}
 				packet.Header.Checksum = int(checkSum)
 				localInterface.Send(packet)
 			}
@@ -156,10 +159,18 @@ func (h *Host) ReadEchoPacket() {
 					packet := h.CreateIPPacket(srcAddr, destAddr, []byte(dataToSend), 1, TTL_MAX)
 
 					// make sure we are computing the checksum in this case too
-					checkSum, _ := computeChecksum(packet)
+					checkSum, err := computeChecksum(packet)
+					if err != nil {
+						log.Print(err)
+						continue
+					}
 					packet.Header.Checksum = int(checkSum)
 					localInterface.Send(packet)
+				} else {
+					log.Printf("interface doesn't exist here to forward")
 				}
+			} else {
+				log.Printf("next hop doesn't exist to forward")
 			}
 		}
 	}
@@ -187,7 +198,10 @@ func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
 	// check if we are sending to one of our interfaces
 	if _, exists := h.LocalIFs[nextHop]; exists {
 		packet := h.CreateIPPacket(nextHop, destAddr, []byte(data), 0, TTL_MAX)
-		checkSum, _ := computeChecksum(packet)
+		checkSum, err := computeChecksum(packet)
+		if err != nil {
+			return err
+		}
 		packet.Header.Checksum = int(checkSum)
 		h.PacketChannel <- packet
 		return nil
@@ -209,7 +223,11 @@ func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
 
 			packet.Header.Checksum = int(checkSum)
 			localInterface.Send(packet)
+		} else {
+			return errors.New("interface doesn't exist here to forward")
 		}
+	} else {
+		return errors.New("next hop doesn't exist to forward")
 	}
 
 	return nil
@@ -220,6 +238,30 @@ func (h *Host) SendPacket(destAddr uint32, protocol int, data string) error {
 */
 func (h *Host) RegisterHandler(protocolNum int, handler Handler) {
 	h.HandlerRegistry[protocolNum] = handler
+}
+
+/*
+	This will read from the message channel for the rip handler and send the messages
+*/
+func (h *Host) ReadFromHandler() {
+	for {
+		select {
+		case data := <-h.MessageChannel:
+			// if we receive a message from the channel, try and forward/send it to the correct interface
+			if len(data) == 0 { // check for empty data
+				break
+			}
+			// get dest and src addr for the message
+			destAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
+			srcAddr := h.RemoteDestination[destAddr]
+
+			// Create an IP packet here
+			packet := h.CreateIPPacket(srcAddr, destAddr, data[ADDR_SIZE:], RIP_PROTOCOL, TTL_MAX)
+
+			// send to the link layer on the correct interface
+			go h.SendToNeighbor(destAddr, packet)
+		}
+	}
 }
 
 func (h *Host) SendToNeighbor(dest uint32, packet IPPacket) {
@@ -244,32 +286,6 @@ func (h *Host) SendToNeighbor(dest uint32, packet IPPacket) {
 		// lookup correct interface from the address to send this packet on
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
 			localInterface.Send(packet)
-		}
-	}
-}
-
-/*
-	This will read from the message channel for the rip handler and send the messages
-*/
-func (h *Host) ReadFromHandler() {
-	for {
-		select {
-		case data := <-h.MessageChannel:
-			// if we receive a message from the channel, try and forward/send it to the correct interface
-			if len(data) == 0 { // check for empty data
-				break
-			}
-			// log.Print("Received data from rip handler channel")
-			// get dest and src addr for the message
-			destAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
-			// log.Printf("DESTINATION ADDR 2: %d\n", destAddr)
-			srcAddr := h.RemoteDestination[destAddr]
-
-			// Create an IP packet here
-			packet := h.CreateIPPacket(srcAddr, destAddr, data[ADDR_SIZE:], RIP_PROTOCOL, TTL_MAX)
-
-			// send to the link layer on the correct interface
-			go h.SendToNeighbor(destAddr, packet)
 		}
 	}
 }
@@ -378,7 +394,7 @@ func (h *Host) sendICMPTimeExceeded(packet IPPacket) {
 	header := traceroute.ICMPHeader{
 		Type:        uint8(header.ICMPv4TimeExceeded),
 		Code:        uint8(0),
-		Checksum:    0, // TODO: add computation for checksum
+		Checksum:    0,
 		Identifier:  0,
 		SequenceNum: 0,
 	}
@@ -406,7 +422,11 @@ func (h *Host) sendICMPTimeExceeded(packet IPPacket) {
 	if addrOfInterface, exists := h.RemoteDestination[entry.NextHop]; exists {
 		// addrOfInterface is the new source address
 		packet := h.CreateIPPacket(addrOfInterface, originalSrc, buf, 1, 16)
-		checkSum, _ := computeChecksum(packet)
+		checkSum, err := computeChecksum(packet)
+		if err != nil {
+			log.Print(err)
+			return
+		}
 		packet.Header.Checksum = int(checkSum)
 
 		if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
@@ -414,6 +434,8 @@ func (h *Host) sendICMPTimeExceeded(packet IPPacket) {
 		} else {
 			log.Printf("interface doesn't exist here to forward")
 		}
+	} else {
+		log.Printf("next hop doesn't exist to forward")
 	}
 }
 

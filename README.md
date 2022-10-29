@@ -72,6 +72,5 @@ To run, you can run `make` or `make clean all` which should create an executable
 - code cleanup! in `host.go` 
   - cleanup "link layer reading" abstraction
   - consolidate checksum and sending packet stuff
-  - cleanup any TODOs in code base 
   - cleanup any error checking/handling 
   - send a rip request without any entries on startup (handle rip request/rip response)

@@ -113,7 +113,7 @@ func sendCommand(h *pkg.Host, line string) {
 	err = h.SendPacket(destAddr, protocolNum, args[3])
 
 	if err != nil {
-		log.Print(fmt.Sprintf("Cannot send to %s, it is an unreachable address", ipAddr.String()))
+		log.Print(fmt.Sprintf("Cannot send to %s, error: %s", ipAddr.String(), err.Error()))
 	}
 }
 
@@ -277,7 +277,6 @@ func main() {
 
 	dataForHandler := make([]interface{}, 0)
 	// sending both the routingTable and the RemoteDestinations as that contains the neighbors
-	// TODO: temp solution
 	dataForHandler = append(dataForHandler, routingTable, &host.RemoteDestination, host.LocalIFs)
 	go ripHandler.InitHandler(dataForHandler)
 
@@ -295,7 +294,7 @@ func main() {
 	fmt.Print("> ")
 	for scanner.Scan() {
 		line := scanner.Text()
-		if line == "\n" {
+		if line[0] == '\n' {
 			continue
 		}
 		commands := strings.Split(line, " ")

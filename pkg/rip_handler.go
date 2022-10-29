@@ -51,6 +51,11 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 	updatedEntries := make([]RIPEntry, 0)
 
 	for _, newEntry := range ripEntry.Entries {
+		if newEntry.Cost == INFINITY {
+			// added check for compatibility with reference node
+			continue
+		}
+
 		oldEntry := table.CheckRoute(newEntry.Address)
 		if oldEntry == nil {
 			// if D isn't in the table, add <D, C, N>
@@ -63,29 +68,14 @@ func (r *RipHandler) ReceivePacket(packet IPPacket, data interface{}) {
 			// D --> destination address
 			// C_old --> the cost
 			// M --> the neighbor / next hop
-
-			// log.Printf("old entry's next hop: %d\n", oldEntry.NextHop)
-			// log.Printf("next hop: %d\n", nextHop)
-			if newEntry.Cost == INFINITY {
-				// added check for compatibility with reference node
-				continue
-			}
-
 			// If existing entry <D, C_old, M>
 			if (newEntry.Cost+1 < oldEntry.Cost) || (newEntry.Cost+1 > oldEntry.Cost && oldEntry.NextHop == nextHop) {
-				//log.Print("updating existing entry")
-				//log.Printf("new entry cost: %d\n", newEntry.Cost)
-				//log.Printf("old entry cost: %d\n", oldEntry.Cost)
-				//log.Printf("new next hop: %d\n", nextHop)
-				//log.Printf("old next hop: %d\n", oldEntry.NextHop)
 				// if C < C_old, update table <D, C, N> --> found better route
 				// if C > C_old and N == M, update table <D, C, M> --> increased cost
-
 				table.UpdateRoute(newEntry.Address, newEntry.Cost+1, nextHop)
 				updatedEntries = append(updatedEntries, newEntry)
 			} else if (newEntry.Cost+1 > oldEntry.Cost) && oldEntry.NextHop != nextHop {
 				// do not send an update if this is the case
-				// log.Printf("Not updating and continuing: %d\n", newEntry.Address)
 				continue
 			}
 			// if C == C_old, just refresh timer --> nothing new
