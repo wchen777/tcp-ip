@@ -83,10 +83,14 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 	if entry == nil {
 		// sending empty list back to the driver
 		return []uint32{}
+	} else if entry.Cost == INFINITY {
+		// this is also unreachable
+		return []uint32{}
 	}
 
 	h.HandlerRegistry[ICMP].AddChanRoutine()
-	log.Printf("entry's next hop: %d\n", entry.NextHop)
+
+	// log.Printf("entry's next hop: %d\n", entry.NextHop)
 	// we have the guarantee that the route should exist
 	// start the ttl at 0
 	currTTL := 1
@@ -95,7 +99,12 @@ func (h *Host) SendTraceroutePacket(destAddr uint32) []uint32 {
 	for currTTL <= INFINITY {
 		nextHop := entry.NextHop
 
-		// lookup next hop address in remote destination map to find our interface address
+		// is it possible that an entry would have cost 0 when we try to find the next hop?
+		// adding this just in case
+		if entry.Cost == INFINITY {
+			return []uint32{}
+		}
+
 		if addrOfInterface, exists := h.RemoteDestination[nextHop]; exists {
 			// lookup correct interface from the address to send this packet on
 			if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
@@ -274,12 +283,6 @@ func (h *Host) SendToNeighbor(dest uint32, packet IPPacket) {
 	}
 
 	packet.Header.Checksum = int(newCheckSum)
-
-	// entry := h.RoutingTable.CheckRoute(dest)
-	// if entry != nil && entry.Cost == INFINITY {
-	// 	log.Print("Unable to reach destination because of cost infinity")
-	// 	return
-	// }
 
 	// lookup next hop address in remote destination map to find our interface address
 	if addrOfInterface, exists := h.RemoteDestination[dest]; exists {

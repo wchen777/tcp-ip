@@ -136,6 +136,20 @@ func traceroute(h *pkg.Host, destAddr string) {
 		return
 	}
 
+	if localIF, exists := h.LocalIFs[binary.BigEndian.Uint32(destIPAddr.To4())]; exists {
+		// if it exists, then there's no need to send a packet
+		// we can just special case this, and return 0 hops
+		localIF.StoppedLock.Lock()
+		if localIF.Stopped {
+			// in the event that the local interface isn't available
+			fmt.Printf("Traceroute to %s does not exist\n", destAddr)
+		} else {
+			fmt.Printf("Traceroute finished in 0 hops\n")
+		}
+		localIF.StoppedLock.Unlock()
+		return
+	}
+
 	// make a goroutine that will handle this from the host end
 	path := h.SendTraceroutePacket(binary.BigEndian.Uint32(destIPAddr.To4()))
 
