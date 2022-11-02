@@ -1,4 +1,4 @@
-package pkg
+package ip
 
 type InterfaceTable struct {
 	LocalAddress  uint32

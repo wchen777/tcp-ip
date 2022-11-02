@@ -14,3 +14,7 @@
 where to initialize UDP socket when sending messages through link layer
 
 registering application layer handler and why we need this -- HandlerFunc, still differentiating between protocol numbers?, write a generic function that differentiates between the two handlers somehow?
+
+
+
+- closed vs deleted? Does deleted mean that both ends are closed? 

@@ -1,9 +1,9 @@
-package pkg
+package ip
 
 import (
 	"bytes"
 	"encoding/binary"
-	"ip/pkg/traceroute"
+	"tcp-ip/pkg/ip/traceroute"
 )
 
 const (

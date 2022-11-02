@@ -1,14 +1,14 @@
-package pkg
+package ip
 
 import (
 	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"ip/pkg/traceroute"
 	"log"
 	"net"
 	"os"
+	"tcp-ip/pkg/ip/traceroute"
 
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"

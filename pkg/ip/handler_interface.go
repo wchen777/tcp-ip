@@ -1,4 +1,4 @@
-package pkg
+package ip
 
 type Handler interface {
 	ReceivePacket(packet IPPacket, data interface{})

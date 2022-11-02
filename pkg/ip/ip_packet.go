@@ -1,4 +1,4 @@
-package pkg
+package ip
 
 import (
 	"golang.org/x/net/ipv4"

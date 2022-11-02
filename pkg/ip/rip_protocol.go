@@ -1,4 +1,4 @@
-package pkg
+package ip
 
 type RIPEntry struct {
 	Cost    uint32

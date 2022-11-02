@@ -5,12 +5,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"ip/pkg"
 	"log"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+	"tcp-ip/pkg/ip"
+	"tcp-ip/pkg/tcp"
 	"text/tabwriter"
 )
 
@@ -20,8 +21,25 @@ const (
 	ICMP_PROTOCOL = 1
 )
 
-func InitRoutingTable(localIFs map[uint32]*pkg.LinkInterface) *pkg.RoutingTable {
-	routingTable := pkg.RoutingTable{Table: make(map[uint32]*pkg.RoutingTableEntry)}
+// the node represents a machine that implements a host using IP routing and a TCP socket API built on top of the host
+type Node struct {
+	Host             *ip.Host // the node's IP host
+	TCPHandler       *tcp.TCPHandler
+	SocketIndexTable []tcp.Socket // essentially functions as a file descriptor table
+}
+
+func (n *Node) VConnect(addr net.IP, port uint16) (*tcp.VTCPConn, error) {
+	return n.TCPHandler.Connect(addr, port)
+}
+
+func (n *Node) VListen(port uint16) (*tcp.VTCPListener, error) {
+	return n.TCPHandler.Listen(port)
+}
+
+// TODO: find a good way to consolidate all these node functions + organize them
+
+func InitRoutingTable(localIFs map[uint32]*ip.LinkInterface) *ip.RoutingTable {
+	routingTable := ip.RoutingTable{Table: make(map[uint32]*ip.RoutingTableEntry)}
 
 	for localIFAddr := range localIFs {
 		routingTable.Table[localIFAddr] = routingTable.CreateEntry(localIFAddr, 0)
@@ -29,16 +47,16 @@ func InitRoutingTable(localIFs map[uint32]*pkg.LinkInterface) *pkg.RoutingTable 
 	return &routingTable
 }
 
-func NewRipHandler(msgChan chan []byte) pkg.Handler {
-	return &pkg.RipHandler{MessageChan: msgChan}
+func NewRipHandler(msgChan chan []byte) ip.Handler {
+	return &ip.RipHandler{MessageChan: msgChan}
 }
 
-func NewTracerouteHandler(nextHopMsg chan pkg.NextHopMsg, echoChan chan []byte) pkg.Handler {
-	return &pkg.TracerouteHandler{RouteChan: nextHopMsg, EchoChan: echoChan}
+func NewTracerouteHandler(nextHopMsg chan ip.NextHopMsg, echoChan chan []byte) ip.Handler {
+	return &ip.TracerouteHandler{RouteChan: nextHopMsg, EchoChan: echoChan}
 }
 
-func NewTestHandler() pkg.Handler {
-	return &pkg.TestHandler{}
+func NewTestHandler() ip.Handler {
+	return &ip.TestHandler{}
 }
 
 // convert a uint32 ip addr to its string version
@@ -49,7 +67,7 @@ func addrNumToIP(addr uint32) string {
 /*
 	Routine for printing out the active interfaces
 */
-func printInterfaces(h *pkg.Host, w io.Writer) {
+func printInterfaces(h *ip.Host, w io.Writer) {
 	fmt.Fprintf(w, "id\t  state\t  local\t  remote\n")
 	for addrLocalIF, localIF := range h.LocalIFs {
 		addrLocal := addrNumToIP(addrLocalIF)
@@ -65,12 +83,12 @@ func printInterfaces(h *pkg.Host, w io.Writer) {
 /*
 	Routine for printing out the routing table
 */
-func printRoutingTable(h *pkg.Host, w io.Writer) {
+func printRoutingTable(h *ip.Host, w io.Writer) {
 	fmt.Fprintf(w, "dest\t  next\t  cost\n")
 	for dest, entry := range h.RoutingTable.Table {
 		destAddr := addrNumToIP(dest)
 		nextHop := entry.NextHop
-		if entry.Cost == pkg.INFINITY {
+		if entry.Cost == ip.INFINITY {
 			continue
 		}
 		nextHopAddr := addrNumToIP(nextHop)
@@ -94,7 +112,7 @@ func printHelp(w io.Writer) {
 /*
 
  */
-func sendCommand(h *pkg.Host, line string) {
+func sendCommand(h *ip.Host, line string) {
 	args := strings.SplitN(line, " ", 4)
 
 	ipAddr := net.ParseIP(args[1])
@@ -120,7 +138,7 @@ func sendCommand(h *pkg.Host, line string) {
 /*
 	q command to quit out of REPL and clean up UDP sending connections
 */
-func quit(h *pkg.Host) {
+func quit(h *ip.Host) {
 	h.CancelHost()
 	h.HostConnection.Close()
 	os.Exit(0)
@@ -129,7 +147,7 @@ func quit(h *pkg.Host) {
 /*
 	traceroute commmand to print out the shortest route
 */
-func traceroute(h *pkg.Host, destAddr string) {
+func traceroute(h *ip.Host, destAddr string) {
 	destIPAddr := net.ParseIP(destAddr)
 	if destIPAddr == nil {
 		log.Print("The destination address is invalid")
@@ -168,16 +186,7 @@ func traceroute(h *pkg.Host, destAddr string) {
 	}
 }
 
-// where everything should be initialized
-func main() {
-
-	args := os.Args
-
-	if len(args) != 2 {
-		log.Fatal("Usage: ./node <path to .lnx>")
-	}
-
-	filepath := args[1]
+func (n *Node) StartNode(filepath string) {
 
 	f, err := os.Open(filepath)
 	defer f.Close()
@@ -187,7 +196,7 @@ func main() {
 	}
 
 	// create host struct
-	host := pkg.Host{}
+	host := ip.Host{}
 	// initialize host fields
 	host.InitHost()
 
@@ -248,7 +257,7 @@ func main() {
 			neighborIPAddr := binary.BigEndian.Uint32(net.ParseIP(neighborIP).To4())
 
 			// create a LinkInterface for each line
-			linkIF := pkg.LinkInterface{
+			linkIF := ip.LinkInterface{
 				InterfaceNumber: l - 1,
 				HostConnection:  hostConn,
 				HostIPAddress:   hostIPAddr,
@@ -393,4 +402,21 @@ func main() {
 
 		fmt.Print("> ")
 	}
+}
+
+// where everything should be initialized
+func main() {
+
+	args := os.Args
+
+	if len(args) != 2 {
+		log.Fatal("Usage: ./node <path to .lnx>")
+	}
+
+	filepath := args[1]
+
+	node := Node{}
+
+	node.StartNode(filepath)
+
 }
