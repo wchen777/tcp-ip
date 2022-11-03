@@ -3,6 +3,7 @@ package tcp
 import (
 	"encoding/binary"
 	"errors"
+	"math/rand"
 	"net"
 	"sync"
 	"tcp-ip/pkg/ip"
@@ -23,6 +24,7 @@ type TCB struct {
 	ReceiveChan   chan []byte // some sort of channel when receiving another message on this layer
 	SendBuffer    []byte
 	ReceiveBuffer []byte
+	TCBLock       sync.Mutex // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
 }
 
 type TCPHandler struct {
@@ -80,13 +82,39 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	t.SocketTable[socketData] = newTCBEntry
 
 	// create a SYN packet with a random sequence number
+	tcpHeader := header.TCPFields{
+		SrcPort:       0,
+		DstPort:       port,
+		SeqNum:        rand.Uint32(),
+		AckNum:        0,
+		DataOffset:    20,
+		Flags:         header.TCPFlagSyn,
+		WindowSize:    65535,
+		Checksum:      0,
+		UrgentPointer: 0,
+	}
+	tcpBytes := make(header.TCP, header.TCPMinimumSize)
+	tcpBytes.Encode(&tcpHeader)
+
+	bytesToSend := make([]byte, 0)
+	binary.Write()
 	// create TCP packet to send a SYN
 
-	// wait for SYN + ACK from server
+	// change the state
+	newTCBEntry.State = SYN_SENT
+
+	for {
+		select {
+		case packet := <-ReceiveChan:
+			// wait for SYN + ACK from server
+			newTCEntry.State = ESTABLISHED
+			break
+		}
+	}
 
 	// sends ACK to server
 
-	// go into ESTABLISHED state and return the new VTCPConn object
+	// return the new VTCPConn object
 	return newConn, nil
 }
 
@@ -127,12 +155,23 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 // can pass in the socket object that is making the call
 func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 	// this will block until a SYN is received from a client that's trying to connect
+	var tcbEntry *TCB
+
+	if val, exists := t.SocketTable[vl.SocketTableKey]; !exists {
+		return nil, errors.New("Listener socket does not exist")
+	} else {
+		tcbEntry = val
+	}
+
 	for {
+		select {
+		case msg := <-tcbEntry.ReceiveChan:
+			// deserialize message and if it's correct, change state, then send SYN ACK
+			// continue and wait for ACK, if we do receive an ACK we have to make sure we are in the right state
+			// then break out of for loop and go into established state
+		}
 
 	}
-	// send SYN ACK
-
-	// wait for ACK to be received
 
 	// create entry + return once connection is established
 	return nil, nil
