@@ -1,11 +1,10 @@
 package tcp
 
-import (
-	"tcp-ip/handlers"
-)
-
+// Storing a socket data key so that we can index into the socket table
+// in the handler
 type VTCPConn struct {
-	TCPHandler *handlers.TCPHandler
+	SocketTableKey SocketData
+	TCPHandler     *TCPHandler
 }
 
 func (vl *VTCPConn) GetType() SocketType {

@@ -28,6 +28,8 @@ type Host struct {
 	HostConnection  *net.UDPConn    // listener and sending on host's udp port
 
 	CancelChannel chan bool // bool channel for cancelling upon q command
+
+	TCPMessageChannel chan []byte
 }
 
 const (
@@ -269,6 +271,35 @@ func (h *Host) ReadFromHandler() {
 
 			// send to the link layer on the correct interface
 			go h.SendToNeighbor(destAddr, packet)
+		case data := <-h.TCPMessageChannel:
+			// when something is received from the TCP message channel
+			if len(data) == 0 {
+				// TODO: should we ever reach this case?
+				break
+			}
+
+			// TODO: make sure that the first four bytes will be the address
+			destAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
+			entry := h.RoutingTable.Table[destAddr]
+
+			if addrOfInterface, exists := h.RemoteDestination[entry.NextHop]; exists {
+				// addrOfInterface is the new source address
+				packet := h.CreateIPPacket(addrOfInterface, destAddr, data[ADDR_SIZE:], 1, 16)
+				checkSum, err := computeChecksum(packet)
+				if err != nil {
+					log.Print(err)
+					return
+				}
+				packet.Header.Checksum = int(checkSum)
+
+				if localInterface, exists := h.LocalIFs[addrOfInterface]; exists {
+					localInterface.Send(packet)
+				} else {
+					log.Printf("interface doesn't exist here to forward")
+				}
+			} else {
+				log.Printf("next hop doesn't exist to forward")
+			}
 		}
 	}
 }

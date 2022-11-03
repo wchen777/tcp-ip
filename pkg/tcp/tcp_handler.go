@@ -67,7 +67,9 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*tcp.VTCPConn, error) {
 	socketData := SocketData{LocalAddr: , LocalPort: , DestAddr: , DestPort: }
 	
 	// create TCP packet to send a SYN 
-
+	// TODO: should the sending all be done with the send function? 
+	// and have the send function switch on the different states?
+	// or should each function handle it's sending separately? 
 	t.IPLayerChannel <- packet
 	// wait for SYN + ACK from server 
 
@@ -127,8 +129,12 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	if tcbEntry, exists := t.SocketTable[key]; exists {
 		// connection exists
 		// call appropriate function for each state
+		// TODO: is it necessary that we switch here or can we switch 
+				 // after a client receives a packet in a channel? 
 		switch tcbEntry.State {
 		case socket.CLOSED:
+			// TODO: what happens if we send something in the channel but the
+			// socket isn't actually expecting that message? how do we prevent blocking? 
 		case socket.LISTEN:
 		case socket.SYN_SENT:
 		case socket.SYN_RECEIVED:
@@ -160,12 +166,15 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 
 // corresponds to RECEIVE in RFC 
 func (t *TCPHandler) Read(data []byte, vc *VTCPConn) (int, error) {
-
+	// maybe we can check the 
 }
 
 // corresponds to SEND in RFC 
 func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (int, error) {
-	// check to see if the connection exists in the table, return error if it doesn't
+	// check to see if the connection exists in the table, return error if it doesn't exist 
+
+	// Per section 3.9, we can check the state of the connection and handle according to the state
+
 }
 
 func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {

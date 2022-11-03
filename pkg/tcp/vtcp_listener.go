@@ -1,6 +1,10 @@
 package tcp
 
+// Storing a socket data key so that we can index into the socket table
+// in the handler
 type VTCPListener struct {
+	SocketTableKey SocketData
+	TCPHandler     *TCPHandler
 }
 
 func (vl *VTCPListener) GetType() SocketType {
