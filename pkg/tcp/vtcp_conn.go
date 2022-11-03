@@ -7,7 +7,7 @@ type VTCPConn struct {
 	TCPHandler     *TCPHandler
 }
 
-func (vl *VTCPConn) GetType() SocketType {
+func (vc *VTCPConn) GetType() SocketType {
 	return CONNECTION
 }
 
@@ -20,8 +20,8 @@ func (vl *VTCPConn) GetType() SocketType {
   * is nil on success, io.EOF if other side of connection was done
   sending, or other error describing other failure cases.
 */
-func (vc *VTCPConn) VRead([]byte) (int, error) {
-
+func (vc *VTCPConn) VRead(data []byte) (int, error) {
+	return vc.TCPHandler.Read(data, vc)
 }
 
 /*
@@ -32,8 +32,8 @@ func (vc *VTCPConn) VRead([]byte) (int, error) {
  * Returns number of bytes written to the connection, error if socket
  * is closed or on other failures.
  */
-func (vc *VTCPConn) VWrite([]byte) (int, error) {
-
+func (vc *VTCPConn) VWrite(data []byte) (int, error) {
+	return vc.TCPHandler.Write(data, vc)
 }
 
 /*
@@ -54,7 +54,7 @@ func (vc *VTCPConn) VWrite([]byte) (int, error) {
  * it reaches the CLOSED state.
  */
 func (vc *VTCPConn) VShutdown(sdType int) error {
-
+	return vc.TCPHandler.Shutdown(sdType, vc)
 }
 
 /*
@@ -66,5 +66,5 @@ func (vc *VTCPConn) VShutdown(sdType int) error {
  * reaches the CLOSED state.  For example, after VClose() any data not yet ACKed should still be retransmitted.
  */
 func (vc *VTCPConn) VClose() error {
-
+	return vc.TCPHandler.Close(vc)
 }

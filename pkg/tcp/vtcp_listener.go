@@ -20,7 +20,7 @@ func (vl *VTCPListener) GetType() SocketType {
  */
 func (vl *VTCPListener) VAccept() (*VTCPConn, error) {
 	// use the tcp handler in the listener struct to cleanup from the table
-	return nil, nil
+	return vl.TCPHandler.Accept(vl)
 }
 
 /*
@@ -31,5 +31,5 @@ func (vl *VTCPListener) VAccept() (*VTCPConn, error) {
  */
 func (vl *VTCPListener) VClose() error {
 	// use the tcp handler in the listener struct to cleanup from the table
-	return nil
+	vl.TCPHandler.Close(vl)
 }

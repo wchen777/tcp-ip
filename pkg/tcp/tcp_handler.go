@@ -2,8 +2,9 @@ package tcp
 
 import (
 	"encoding/binary"
-	"ip/pkg/socket"
+	"errors"
 	"net"
+	"sync"
 	"tcp-ip/pkg/ip"
 
 	"github.com/google/netstack/tcpip/header"
@@ -18,22 +19,19 @@ type SocketData struct {
 }
 
 type TCB struct {
-	State       socket.ConnectionState
-	Socket      *socket.Socket
-	ReceiveChan chan []byte // some sort of channel when receiving another message on this layer
-	LocalAddr   uint32
-	// need to store send and receive buffers in the TCB
-	// TODO: should these be a part of the socket itself or in the TCB?
+	State         ConnectionState
+	ReceiveChan   chan []byte // some sort of channel when receiving another message on this layer
 	SendBuffer    []byte
 	ReceiveBuffer []byte
 }
 
 type TCPHandler struct {
-	SocketTable    map[SocketData]*TCB // maps tuple to representation of the socket
-	IPLayerChannel chan []byte         // connect with the host layer about TCP packet
+	SocketTable     map[SocketData]*TCB // maps tuple to representation of the socket
+	IPLayerChannel  chan []byte         // connect with the host layer about TCP packet
+	SocketTableLock sync.Mutex          // TODO: figure out if this is necessary
 }
 
-func CreateTCPPacket(srcPort uint16, dstPort uint16, seqNum uint32, ackNum uint32) header.TCPFields {
+func CreateTCPHeader(srcPort uint16, dstPort uint16, seqNum uint32, ackNum uint32) header.TCPFields {
 	return header.TCPFields{
 		SrcPort:       srcPort,
 		DstPort:       dstPort,
@@ -56,26 +54,40 @@ func CreateTCPPacket(srcPort uint16, dstPort uint16, seqNum uint32, ackNum uint3
  * VConnect MUST block until the connection is
  * established, or an error occurs.
  */
-func (t *TCPHandler) Connect(addr net.IP, port uint16) (*tcp.VTCPConn, error) {
+func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	destAddr := binary.BigEndian.Uint32(addr.To4())
 
-	// TODO: first need to check if the entry exists? Yes, and return error in this case
+	// TODO: how to get the local address and local port?
+	socketData := SocketData{LocalAddr: 0, LocalPort: 0, DestAddr: destAddr, DestPort: port}
+
+	if _, exists := t.SocketTable[socketData]; exists {
+		return nil, errors.New("Socket for this address already exists")
+	}
+
+	// create a TCB entry and socketData entry once we have verified it doesn't already exist
+	newConn := &VTCPConn{
+		SocketTableKey: socketData,
+		TCPHandler:     t,
+	}
+	newTCBEntry := &TCB{
+		State:         SYN_SENT,
+		ReceiveChan:   make(chan []byte), // some sort of channel when receiving another message on this layer
+		SendBuffer:    make([]byte, 0),
+		ReceiveBuffer: make([]byte, 0),
+	}
+
+	// add to the socket table
+	t.SocketTable[socketData] = newTCBEntry
 
 	// create a SYN packet with a random sequence number
-	// create a TCB entry and socketData entry 
-	newTCBEntry := &TCB{socket.SYN_SENT, }
-	socketData := SocketData{LocalAddr: , LocalPort: , DestAddr: , DestPort: }
-	
-	// create TCP packet to send a SYN 
-	// TODO: should the sending all be done with the send function? 
-	// and have the send function switch on the different states?
-	// or should each function handle it's sending separately? 
-	t.IPLayerChannel <- packet
-	// wait for SYN + ACK from server 
+	// create TCP packet to send a SYN
 
-	// sends ACK to server 
+	// wait for SYN + ACK from server
 
-	// go into ESTABLISHED state and return the new VTCPConn object 
+	// sends ACK to server
+
+	// go into ESTABLISHED state and return the new VTCPConn object
+	return newConn, nil
 }
 
 // Where listen is actually implemented
@@ -88,26 +100,92 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*tcp.VTCPConn, error) {
  * Returns a TCPListener on success.  On failure, returns an
  * appropriate error in the "error" value
  */
-func (t *TCPHandler) Listen(port uint16) (*socket.VTCPListener, error) {
-	// TODO: check if port is already used
+func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
+	// TODO: check if port is already used + how do we know which interface to listen on?
 
 	// initialize tcb with listen state, return listener socket conn
-	// go into the LISTEN state 
-	socketData := SocketData{LocalAddr: , LocalPort: , DestAddr: , DestPort: }
-
-	// if the entry doesn't yet exist 
-	newTCBEntry := &TCB{
-		State: ,
-		Socket: ,
-		ReceiveChan: ,
-		LocalAddr: ,
-		SendBuffer: ,
-		ReceiveBuffer: 
+	// go into the LISTEN state
+	socketTableKey := SocketData{LocalAddr: 0, LocalPort: port, DestAddr: 0, DestPort: 0}
+	if _, exists := t.SocketTable[socketTableKey]; exists {
+		return nil, errors.New("Listener socket already exists")
 	}
 
-	socket.VTCPListener
+	// if the entry doesn't yet exist
+	listenerSocket := &VTCPListener{SocketTableKey: socketTableKey, TCPHandler: t}
+	newTCBEntry := &TCB{
+		State:         LISTEN,
+		ReceiveChan:   make(chan []byte),
+		SendBuffer:    make([]byte, 0),
+		ReceiveBuffer: make([]byte, 0),
+	}
+	t.SocketTable[socketTableKey] = newTCBEntry
+
+	return listenerSocket, nil
 }
 
+// eventually each of the "socket" objects will make a call to the TCP handler stack
+// can pass in the socket object that is making the call
+func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
+	// this will block until a SYN is received from a client that's trying to connect
+	for {
+
+	}
+	// send SYN ACK
+
+	// wait for ACK to be received
+
+	// create entry + return once connection is established
+	return nil, nil
+}
+
+// corresponds to RECEIVE in RFC
+func (t *TCPHandler) Read(data []byte, vc *VTCPConn) (int, error) {
+	// check to see if the connection exists in the table, return error if it doesn't exist
+	var tcbEntry *TCB
+
+	if val, exists := t.SocketTable[vc.SocketTableKey]; !exists {
+		return -1, errors.New("Connection doesn't exist")
+	} else {
+		tcbEntry = val
+	}
+
+	// Per section 3.9, we can check the state of the connection and handle according to the state
+	switch tcbEntry.State {
+
+	}
+
+	return 0, nil
+}
+
+// corresponds to SEND in RFC
+func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (int, error) {
+	// check to see if the connection exists in the table, return error if it doesn't exist
+	var tcbEntry *TCB
+
+	if val, exists := t.SocketTable[vc.SocketTableKey]; !exists {
+		return -1, errors.New("Connection doesn't exist")
+	} else {
+		tcbEntry = val
+	}
+
+	// Per section 3.9, we can check the state of the connection and handle according to the state
+	switch tcbEntry.State {
+
+	}
+	return 0, nil
+}
+
+func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
+	return nil
+}
+
+// Both socket types will need a close, so pass in socket instead
+// then we can call getTye to get the exact object
+func (t *TCPHandler) Close(socket *Socket) error {
+	return nil
+}
+
+// when we receive a packet from the IP layer
 func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	// extract the header from the data portion of the IP packet
 	tcpData := packet.Data
@@ -129,64 +207,15 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	if tcbEntry, exists := t.SocketTable[key]; exists {
 		// connection exists
 		// call appropriate function for each state
-		// TODO: is it necessary that we switch here or can we switch 
-				 // after a client receives a packet in a channel? 
-		switch tcbEntry.State {
-		case socket.CLOSED:
-			// TODO: what happens if we send something in the channel but the
-			// socket isn't actually expecting that message? how do we prevent blocking? 
-		case socket.LISTEN:
-		case socket.SYN_SENT:
-		case socket.SYN_RECEIVED:
-		case socket.ESTABLISHED:
-		case socket.FIN_WAIT_1:
-		case socket.FIN_WAIT_2:
-		case socket.CLOSING:
-		case socket.TIME_WAIT:
-		case socket.CLOSE_WAIT:
-		case socket.LAST_ACK:
-		}
+		// TODO: is it necessary that we switch here or can we do the error checking / handling of the packet
+		// after the connection receives a packet in a channel?
+		tcbEntry.ReceiveChan <- tcpHeaderAndData
 	} else {
 		// connection does not exist
-		// TODO: what to do here
+		// TODO: what to do here, do we treat the packet as effectively dropped?
+		return
 	}
 }
-
-// eventually each of the "socket" objects will make a call to the TCP handler stack 
-// can pass in the socket object that is making the call
-func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
-	// this will block until a SYN is received from a client that's trying to connect
-	
-	// send SYN ACK 
-
-	// wait for ACK to be received 
-
-	// create entry + return once connection is established 
-} 
-
-// corresponds to RECEIVE in RFC 
-func (t *TCPHandler) Read(data []byte, vc *VTCPConn) (int, error) {
-	// maybe we can check the 
-}
-
-// corresponds to SEND in RFC 
-func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (int, error) {
-	// check to see if the connection exists in the table, return error if it doesn't exist 
-
-	// Per section 3.9, we can check the state of the connection and handle according to the state
-
-}
-
-func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
-
-}
-
-// Both socket types will need a close, so pass in socket instead 
-// then we can call getTye to get the exact object 
-func (t *TCPHandler) Close(socket *Socket) error {
-
-}
-
 
 func (t *TCPHandler) InitHandler(data []interface{}) {
 

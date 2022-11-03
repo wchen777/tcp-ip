@@ -345,12 +345,12 @@ func (n *Node) StartNode(filepath string) {
 			break
 		case "down":
 			if len(commands) < 2 {
-				log.Print("Invalid number of arguments for down")
+				fmt.Print("Invalid number of arguments for down")
 				break
 			}
 			ifNum, err := strconv.Atoi(commands[1])
 			if err != nil {
-				log.Print("Invalid input for interface number")
+				fmt.Print("Invalid input for interface number")
 				break
 			}
 			err = host.DownInterface(ifNum)
@@ -360,13 +360,13 @@ func (n *Node) StartNode(filepath string) {
 			}
 		case "up":
 			if len(commands) < 2 {
-				log.Print("Invalid number of arguments for up")
+				fmt.Print("Invalid number of arguments for up")
 				break
 			}
 
 			ifNum, err := strconv.Atoi(commands[1])
 			if err != nil {
-				log.Print("Invalid input for interface number")
+				fmt.Print("Invalid input for interface number")
 				break
 			}
 
@@ -378,23 +378,32 @@ func (n *Node) StartNode(filepath string) {
 
 		case "send":
 			if len(commands) < 4 {
-				log.Print("Invalid number of arguments for send")
+				fmt.Print("Invalid number of arguments for send")
 				break
 			}
 			sendCommand(&host, line)
 			break
 		case "q":
 			if len(commands) != 1 {
-				log.Print("Invalid number of arguments for q")
+				fmt.Print("Invalid number of arguments for q")
 				break
 			}
 			quit(&host)
 		case "traceroute":
 			if len(commands) != 2 {
-				log.Print("Invalid number of arguments for traceroute")
+				fmt.Print("Invalid number of arguments for traceroute")
 				break
 			}
 			traceroute(&host, commands[1])
+		case "a":
+			if len(commands) != 2 {
+				fmt.Print("Invalid number of arguments for <a>ccept")
+			}
+		case "c":
+			if len(commands) != 3 {
+				fmt.Print("Invalid number of arguments for <c>onnect")
+			}
+
 		default:
 			printHelp(w)
 			w.Flush()
