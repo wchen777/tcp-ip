@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"math/rand"
@@ -96,18 +97,23 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	tcpBytes := make(header.TCP, header.TCPMinimumSize)
 	tcpBytes.Encode(&tcpHeader)
 
-	bytesToSend := make([]byte, 0)
-	binary.Write()
-	// create TCP packet to send a SYN
+	bytesArray := &bytes.Buffer{}
+	binary.Write(bytesArray, binary.BigEndian, destAddr)
+	buf := bytesArray.Bytes()
+	buf = append(buf, tcpBytes...)
+
+	// send to IP layer
+	t.IPLayerChannel <- buf
 
 	// change the state
 	newTCBEntry.State = SYN_SENT
 
 	for {
 		select {
-		case packet := <-ReceiveChan:
+		case packet := <-newTCBEntry.ReceiveChan:
 			// wait for SYN + ACK from server
-			newTCEntry.State = ESTABLISHED
+			// once we have received it and verified it, we set state to be established
+			newTCBEntry.State = ESTABLISHED
 			break
 		}
 	}
