@@ -44,7 +44,7 @@ If SND.UNA < SEG.ACK =< SND.NXT, then enter ESTABLISHED state --> why do we not 
 
 **tcp handler:**
 - synchronization for socket table? + access to entries?
-
+- think about queue of incoming connections for accept
 
 
 
