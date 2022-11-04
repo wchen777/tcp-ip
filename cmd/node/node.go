@@ -28,14 +28,6 @@ type Node struct {
 	SocketIndexTable []tcp.Socket // essentially functions as a file descriptor table
 }
 
-func (n *Node) VConnect(addr net.IP, port uint16) (*tcp.VTCPConn, error) {
-	return n.TCPHandler.Connect(addr, port)
-}
-
-func (n *Node) VListen(port uint16) (*tcp.VTCPListener, error) {
-	return n.TCPHandler.Listen(port)
-}
-
 // TODO: find a good way to consolidate all these node functions + organize them
 
 func InitRoutingTable(localIFs map[uint32]*ip.LinkInterface) *ip.RoutingTable {
