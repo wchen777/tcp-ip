@@ -9,7 +9,7 @@ const (
 )
 
 const (
-	CLOSED = iota
+	CLOSED ConnectionState = iota
 	LISTEN
 	SYN_SENT
 	SYN_RECEIVED

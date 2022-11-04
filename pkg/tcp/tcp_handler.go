@@ -65,27 +65,16 @@ type TCB struct {
 	// pointer to retransmit queue and current segment
 }
 
+/*
+	the TCP Handler represents the kernel's TCP stack to handle the incoming/outgoing packets to the machine
+	TCP socket API calls wrap TCP handler calls, which keep track of the TCP socket's states etc.
+*/
 type TCPHandler struct {
 	SocketTable     map[SocketData]*TCB // maps tuple to representation of the socket
 	IPLayerChannel  chan []byte         // connect with the host layer about TCP packet
 	SocketTableLock sync.Mutex          // TODO: figure out if this is necessary
 }
 
-func CreateTCPHeader(srcPort uint16, dstPort uint16, seqNum uint32, ackNum uint32) header.TCPFields {
-	return header.TCPFields{
-		SrcPort:       srcPort,
-		DstPort:       dstPort,
-		SeqNum:        seqNum,
-		AckNum:        ackNum,
-		DataOffset:    20,
-		Flags:         header.TCPFlagSyn | header.TCPFlagAck,
-		WindowSize:    65535,
-		Checksum:      0,
-		UrgentPointer: 0,
-	}
-}
-
-// The actual place where connect is implemented
 /*
  * Creates a new socket and connects to an
  * address:port (active OPEN in the RFC).
@@ -159,7 +148,6 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	return newConn, nil
 }
 
-// Where listen is actually implemented
 /*
  * Create a new listen socket bound to the specified port on any
  * of this node's interfaces.
@@ -263,7 +251,9 @@ func (t *TCPHandler) Close(socket *Socket) error {
 	return nil
 }
 
-// when we receive a packet from the IP layer
+/*
+	handles when we receive a packet from the IP layer --> implements the TCP state machine diagram
+*/
 func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	// extract the header from the data portion of the IP packet
 	tcpData := packet.Data
@@ -296,42 +286,29 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			log.Printf("received a segment when state is in LISTEN")
 			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
 				return
-			} else if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 {
+			} else if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // received SYN while in listen
 				// create the new socket
 				// need to figure out what the local addr and local port would be
 				socketData := SocketData{LocalAddr: 0, LocalPort: 0, DestAddr: destAddr, DestPort: destPort}
+
+				// create a new tcb entry to represent the spawned socket connection
 				newTCBEntry := &TCB{ConnectionType: 0,
 					ReceiveChan: make(chan SocketData),
 					SND:         &Send{Buffer: make([]byte, 0)},
 					RCV:         &Receive{Buffer: make([]byte, 0)}}
-				newTCBEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1
-				newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber()
-				newTCBEntry.SND.ISS = rand.Uint32()
+
+				newTCBEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 //
+				newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber()     //
+				newTCBEntry.SND.ISS = NewISS()                       // start with random ISS
 				newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1
 				newTCBEntry.SND.UNA = newTCBEntry.SND.ISS
-				newTCBEntry.State = SYN_RECEIVED
+				newTCBEntry.State = SYN_RECEIVED // move to SYN_RECEIVED
 				newTCBEntry.ListenKey = key
 				t.SocketTable[socketData] = newTCBEntry
 
 				// send SYN-ACK
-				tcpHeader := header.TCPFields{
-					SrcPort:       srcPort,
-					DstPort:       destPort,
-					SeqNum:        tcbEntry.SND.ISS,
-					AckNum:        tcbEntry.RCV.NXT,
-					DataOffset:    20,
-					Flags:         header.TCPFlagSyn | header.TCPFlagAck,
-					WindowSize:    65535,
-					Checksum:      0,
-					UrgentPointer: 0,
-				}
-				tcpBytes := make(header.TCP, header.TCPMinimumSize)
-				tcpBytes.Encode(&tcpHeader)
-
-				bytesArray := &bytes.Buffer{}
-				binary.Write(bytesArray, binary.BigEndian, destAddr)
-				buf := bytesArray.Bytes()
-				buf = append(buf, tcpBytes...)
+				tcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.ISS, tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck)
+				buf := MarshallTCPHeader(&tcpHeader, destAddr)
 
 				// send to IP layer
 				t.IPLayerChannel <- buf
@@ -339,16 +316,15 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				// in all other cases the packet should be dropped
 				return
 			}
-		case SYN_SENT:
-			// looking to get a SYN ACK
+		case SYN_SENT: // looking to get a SYN ACK to acknowledge our SYN and try and SYN with us
 			log.Printf("received a segment when state is in SYN_SENT")
-			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
+			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 { // received ack
 				if (tcpHeader.AckNumber() <= tcbEntry.SND.ISS) || (tcpHeader.AckNumber() > tcbEntry.SND.NXT) {
-					log.Printf("dropping packet")
+					log.Printf("dropping packet") // but ack does not acknowledge our latest send
 					return
 				}
 			}
-			if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 {
+			if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // if syn (still can reach here if ACK is 0)
 				tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1
 				tcbEntry.RCV.IRS = tcpHeader.SequenceNumber()
 				tcbEntry.SND.UNA = tcpHeader.AckNumber()
@@ -356,56 +332,26 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				if tcbEntry.SND.UNA > tcbEntry.SND.ISS {
 					tcbEntry.State = ESTABLISHED
 
-					// TODO: refactor this so it happens in a resusable function
-					tcbEntry.SND.ISS = rand.Uint32()
-					tcpHeader := header.TCPFields{
-						SrcPort:       srcPort,
-						DstPort:       destPort,
-						SeqNum:        tcbEntry.SND.NXT,
-						AckNum:        tcbEntry.RCV.NXT,
-						DataOffset:    20,
-						Flags:         header.TCPFlagAck,
-						WindowSize:    65535,
-						Checksum:      0,
-						UrgentPointer: 0,
-					}
-					tcpBytes := make(header.TCP, header.TCPMinimumSize)
-					tcpBytes.Encode(&tcpHeader)
+					tcbEntry.SND.ISS = NewISS()
 
-					bytesArray := &bytes.Buffer{}
-					binary.Write(bytesArray, binary.BigEndian, destAddr)
-					buf := bytesArray.Bytes()
-					buf = append(buf, tcpBytes...)
+					// create the tcp header with the ____
+					tcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck)
+					buf := MarshallTCPHeader(&tcpHeader, destAddr)
 
 					tcbEntry.ReceiveChan <- key
-					t.IPLayerChannel <- buf
+					t.IPLayerChannel <- buf // send this to the ip layer channel so it can be sent as data
 					return
 				}
 
-				// (simultaneous open)
+				// (simultaneous open), ACK is 0 (just SYN)
 				// enter SYN_RECEIVED
 				tcbEntry.State = SYN_RECEIVED
 
 				// need to send SYN_ACK in this case
-				tcbEntry.SND.ISS = rand.Uint32()
-				msgtcpHeader := header.TCPFields{
-					SrcPort:       srcPort,
-					DstPort:       destPort,
-					SeqNum:        tcbEntry.SND.ISS,
-					AckNum:        tcbEntry.RCV.NXT,
-					DataOffset:    20,
-					Flags:         header.TCPFlagSyn | header.TCPFlagAck,
-					WindowSize:    65535,
-					Checksum:      0,
-					UrgentPointer: 0,
-				}
-				tcpBytes := make(header.TCP, header.TCPMinimumSize)
-				tcpBytes.Encode(&msgtcpHeader)
+				tcbEntry.SND.ISS = NewISS()
 
-				bytesArray := &bytes.Buffer{}
-				binary.Write(bytesArray, binary.BigEndian, destAddr)
-				buf := bytesArray.Bytes()
-				buf = append(buf, tcpBytes...)
+				msgtcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.ISS, tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck)
+				buf := MarshallTCPHeader(&msgtcpHeader, destAddr)
 
 				t.IPLayerChannel <- buf
 
@@ -454,12 +400,32 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 
 func (t *TCPHandler) InitHandler(data []interface{}) {
 
+	//if len(data) != 3 { TODO: populate this when we know the length of the data args
+	//	log.Print("Incorrect length of data, returning from init handler")
+	//	return
+	//}
+
+	var socketTableData map[SocketData]*TCB // maps are passed by reference in go
+
+	if val, ok := data[0].(map[SocketData]*TCB); ok {
+		socketTableData = val
+	} else {
+		log.Print("Unable to create socket table from handler data")
+		return
+	}
+
+	t.SocketTable = socketTableData
+
+	var ipChan chan []byte // channels are also passed by reference
+
+	if chanVal, ok := data[1].(chan []byte); ok {
+		ipChan = chanVal
+	} else {
+		log.Print("Unable to create IP layer channel from handler data")
+		return
+	}
+
+	t.IPLayerChannel = ipChan
+
 }
 
-func (t *TCPHandler) AddChanRoutine() {
-	return
-}
-
-func (t *TCPHandler) RemoveChanRoutine() {
-	return
-}
