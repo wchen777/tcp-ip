@@ -186,6 +186,14 @@ func traceroute(h *ip.Host, destAddr string) {
 	}
 }
 
+func acceptCommand() {
+
+}
+
+func connectCommand() {
+
+}
+
 func (n *Node) StartNode(filepath string) {
 
 	f, err := os.Open(filepath)
@@ -399,11 +407,12 @@ func (n *Node) StartNode(filepath string) {
 			if len(commands) != 2 {
 				fmt.Print("Invalid number of arguments for <a>ccept")
 			}
+			acceptCommand()
 		case "c":
 			if len(commands) != 3 {
 				fmt.Print("Invalid number of arguments for <c>onnect")
 			}
-
+			connectCommand()
 		default:
 			printHelp(w)
 			w.Flush()

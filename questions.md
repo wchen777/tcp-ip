@@ -18,3 +18,4 @@ registering application layer handler and why we need this -- HandlerFunc, still
 
 
 - closed vs deleted? Does deleted mean that both ends are closed? 
+- how do we choose the initial port number when connecting? 

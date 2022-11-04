@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"log"
 	"math/rand"
 	"net"
 	"sync"
@@ -12,7 +13,6 @@ import (
 	"github.com/google/netstack/tcpip/header"
 )
 
-// TODO: do we need to include the protocol as part of this tuple?
 type SocketData struct {
 	LocalAddr uint32
 	LocalPort uint16
@@ -20,12 +20,47 @@ type SocketData struct {
 	DestPort  uint16
 }
 
+type TCPPacket struct {
+	Header header.TCPFields
+	Data   []byte
+}
+
+// The Send struct and Receive structs will be used to implement sliding window
+// TODO: need some pointer to indicate the next place where the application reads/writes to
+/*
+1         2          3          4
+----------|----------|----------|----------
+		  UNA       NXT         UNA + WND (the last byte written)
+*/
+type Send struct {
+	Buffer []byte
+	UNA    uint32 // olded unacknowledged segment
+	NXT    uint32 // next byte to send
+	Window uint32 // TODO: does this just specify the window size?
+	ISS    uint32 // initial send sequence number
+}
+
+/*
+1         2          3
+----------|----------|----------
+		RCV.NXT    RCV.NXT
+				  +RCV.WND
+*/
+type Receive struct {
+	Buffer []byte
+	NXT    uint32 // the next sequence number expected to receive
+	Window uint32
+	IRS    uint32 // initial receive sequence number
+}
+
 type TCB struct {
-	State         ConnectionState
-	ReceiveChan   chan []byte // some sort of channel when receiving another message on this layer
-	SendBuffer    []byte
-	ReceiveBuffer []byte
-	TCBLock       sync.Mutex // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
+	State       ConnectionState
+	ReceiveChan chan []byte // some sort of channel when receiving another message on this layer
+	SND         *Send
+	RCV         *Receive
+	TCBLock     sync.Mutex // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
+	// TODO:
+	// pointer to retransmit queue and current segment
 }
 
 type TCPHandler struct {
@@ -73,10 +108,8 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 		TCPHandler:     t,
 	}
 	newTCBEntry := &TCB{
-		State:         SYN_SENT,
-		ReceiveChan:   make(chan []byte), // some sort of channel when receiving another message on this layer
-		SendBuffer:    make([]byte, 0),
-		ReceiveBuffer: make([]byte, 0),
+		State:       SYN_SENT,
+		ReceiveChan: make(chan []byte), // some sort of channel when receiving another message on this layer
 	}
 
 	// add to the socket table
@@ -108,15 +141,17 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	// change the state
 	newTCBEntry.State = SYN_SENT
 
-	for {
-		select {
-		case packet := <-newTCBEntry.ReceiveChan:
-			// wait for SYN + ACK from server
-			// once we have received it and verified it, we set state to be established
-			newTCBEntry.State = ESTABLISHED
-			break
-		}
-	}
+	// TODO: I think we should wait for a channel update here. RFC makes it seems like we should handle state changes on receive
+
+	// for {
+	// 	select {
+	// 	case packet := <-newTCBEntry.ReceiveChan:
+	// 		// wait for SYN + ACK from server
+	// 		// once we have received it and verified it, we set state to be established
+	// 		newTCBEntry.State = ESTABLISHED
+	// 		break
+	// 	}
+	// }
 
 	// sends ACK to server
 
@@ -147,10 +182,8 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 	// if the entry doesn't yet exist
 	listenerSocket := &VTCPListener{SocketTableKey: socketTableKey, TCPHandler: t}
 	newTCBEntry := &TCB{
-		State:         LISTEN,
-		ReceiveChan:   make(chan []byte),
-		SendBuffer:    make([]byte, 0),
-		ReceiveBuffer: make([]byte, 0),
+		State:       LISTEN,
+		ReceiveChan: make(chan []byte),
 	}
 	t.SocketTable[socketTableKey] = newTCBEntry
 
@@ -230,6 +263,43 @@ func (t *TCPHandler) Close(socket *Socket) error {
 	return nil
 }
 
+// TODO: maybe we can have a map of sorts or something
+func (t *TCPHandler) HandleStateListen(tcpPacket TCPPacket) {
+
+}
+
+func (t *TCPHandler) HandleStateSynSent(tcpPacket TCPPacket) {
+
+}
+
+func (t *TCPHandler) HandleStateSynReceived(tcpPacket TCPPacket) {
+
+}
+
+func (t *TCPHandler) HandleEstablished(tcpPacket TCPPacket) {
+
+}
+
+func (t *TCPHandler) HandleFinWait1(tcpPacket TCPPacket) {
+
+}
+
+func (t *TCPHandler) HandleFinWait2(tcpPacket TCPPacket) {
+
+}
+
+func (t *TCPHandler) HandleClosing(tcpPacket TCPPacket) {
+
+}
+
+func (t *TCPHandler) HandleTimeWait(tcpPacket TCPPacket) {
+
+}
+
+func (t *TCPHandler) HandleCloseWait(tcpPacket TCPPacket) {
+
+}
+
 // when we receive a packet from the IP layer
 func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	// extract the header from the data portion of the IP packet
@@ -251,9 +321,41 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	key := SocketData{LocalAddr: localAddr, LocalPort: srcPort, DestAddr: destAddr, DestPort: destPort}
 	if tcbEntry, exists := t.SocketTable[key]; exists {
 		// connection exists
-		// call appropriate function for each state
-		// TODO: is it necessary that we switch here or can we do the error checking / handling of the packet
-		// after the connection receives a packet in a channel?
+		// TODO: call appropriate function for each state
+		// Switch on the state of the receiving socket once a packet is received
+		// This is implemented from Section 3.10
+		switch tcbEntry.State {
+		case CLOSED:
+			log.Printf("received a segment when state is CLOSED")
+			return
+		case LISTEN:
+			// first check the SYN
+			log.Printf("received a segment when state is in LISTEN")
+			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
+				return
+			} else if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 {
+
+			} else {
+				// in all other cases the packet should be dropped
+				return
+			}
+		case SYN_SENT:
+			log.Printf("received a segment when state is in SYN_SENT")
+			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
+				if (tcpHeader.AckNumber() <= tcbEntry.SND.ISS) || (tcpHeader.AckNumber() > tcbEntry.SND.NXT) {
+					log.Printf("dropping packet")
+					return
+				}
+			}
+		case SYN_RECEIVED:
+		case ESTABLISHED:
+		case FIN_WAIT_1:
+		case FIN_WAIT_2:
+		case CLOSING:
+		case TIME_WAIT:
+		case CLOSE_WAIT:
+		case LAST_ACK:
+		}
 		tcbEntry.ReceiveChan <- tcpHeaderAndData
 	} else {
 		// connection does not exist
