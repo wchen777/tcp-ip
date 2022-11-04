@@ -28,8 +28,6 @@ type Node struct {
 	SocketIndexTable []tcp.Socket // essentially functions as a file descriptor table
 }
 
-// TODO: find a good way to consolidate all these node functions + organize them
-
 func InitRoutingTable(localIFs map[uint32]*ip.LinkInterface) *ip.RoutingTable {
 	routingTable := ip.RoutingTable{Table: make(map[uint32]*ip.RoutingTableEntry)}
 
@@ -57,41 +55,9 @@ func addrNumToIP(addr uint32) string {
 }
 
 /*
-	Routine for printing out the active interfaces
-*/
-func printInterfaces(h *ip.Host, w io.Writer) {
-	fmt.Fprintf(w, "id\t  state\t  local\t  remote\n")
-	for addrLocalIF, localIF := range h.LocalIFs {
-		addrLocal := addrNumToIP(addrLocalIF)
-		addrRemote := addrNumToIP(localIF.DestIPAddress)
-		if localIF.Stopped {
-			fmt.Fprintf(w, "%d\t  %s\t  %s\t  %s\n", localIF.InterfaceNumber, "down", addrLocal, addrRemote)
-		} else {
-			fmt.Fprintf(w, "%d\t  %s\t  %s\t  %s\n", localIF.InterfaceNumber, "up", addrLocal, addrRemote)
-		}
-	}
-}
-
-/*
-	Routine for printing out the routing table
-*/
-func printRoutingTable(h *ip.Host, w io.Writer) {
-	fmt.Fprintf(w, "dest\t  next\t  cost\n")
-	for dest, entry := range h.RoutingTable.Table {
-		destAddr := addrNumToIP(dest)
-		nextHop := entry.NextHop
-		if entry.Cost == ip.INFINITY {
-			continue
-		}
-		nextHopAddr := addrNumToIP(nextHop)
-		fmt.Fprintf(w, "%s\t  %s\t  %d\n", destAddr, nextHopAddr, entry.Cost)
-	}
-}
-
-/*
 	print out help usage for the node
 */
-func printHelp(w io.Writer) {
+func (n *Node) PrintHelp(w io.Writer) {
 	fmt.Fprintf(w, "send <ip> <proto> <string> \t - Sends the string payload to the given ip address with the specified protocol.\n")
 	fmt.Fprintf(w, "down <interface-num> \t - Bring an interface \"down\".\n")
 	fmt.Fprintf(w, "up <interface-num> \t - Bring an interface \"up\".\n")
@@ -102,88 +68,12 @@ func printHelp(w io.Writer) {
 }
 
 /*
-
- */
-func sendCommand(h *ip.Host, line string) {
-	args := strings.SplitN(line, " ", 4)
-
-	ipAddr := net.ParseIP(args[1])
-	if ipAddr == nil {
-		log.Print("Invalid ip address")
-		return
-	}
-	destAddr := binary.BigEndian.Uint32(ipAddr.To4())
-	protocolNum, err := strconv.Atoi(args[2])
-
-	if err != nil || protocolNum != TEST_PROTOCOL {
-		log.Print("Invalid protocol num")
-		return
-	}
-
-	err = h.SendPacket(destAddr, protocolNum, args[3])
-
-	if err != nil {
-		log.Print(fmt.Sprintf("Cannot send to %s, error: %s", ipAddr.String(), err.Error()))
-	}
-}
-
-/*
 	q command to quit out of REPL and clean up UDP sending connections
 */
-func quit(h *ip.Host) {
-	h.CancelHost()
-	h.HostConnection.Close()
+func (n *Node) Quit() {
+	n.Host.CancelHost()
+	n.Host.HostConnection.Close()
 	os.Exit(0)
-}
-
-/*
-	traceroute commmand to print out the shortest route
-*/
-func traceroute(h *ip.Host, destAddr string) {
-	destIPAddr := net.ParseIP(destAddr)
-	if destIPAddr == nil {
-		log.Print("The destination address is invalid")
-		return
-	}
-
-	if localIF, exists := h.LocalIFs[binary.BigEndian.Uint32(destIPAddr.To4())]; exists {
-		// if it exists, then there's no need to send a packet
-		// we can just special case this, and return 0 hops
-		localIF.StoppedLock.Lock()
-		if localIF.Stopped {
-			// in the event that the local interface isn't available
-			fmt.Printf("Traceroute to %s does not exist\n", destAddr)
-		} else {
-			fmt.Printf("Traceroute finished in 0 hops\n")
-		}
-		localIF.StoppedLock.Unlock()
-		return
-	}
-
-	// make a goroutine that will handle this from the host end
-	path := h.SendTraceroutePacket(binary.BigEndian.Uint32(destIPAddr.To4()))
-
-	// wait on a channel that should return the path
-	// the channel data should be sent from the handler
-	if len(path) == 0 {
-		fmt.Printf("Traceroute to %s does not exist\n", destAddr)
-	} else {
-		startAddr := h.RemoteDestination[path[0]]
-		fmt.Printf("Traceroute from %s to %s\n", addrNumToIP(startAddr), destAddr)
-		for index, hop := range path {
-			hopAddr := addrNumToIP(hop)
-			fmt.Printf("%d  %s\n", index+1, hopAddr)
-		}
-		fmt.Printf("Traceroute finished in %d hops\n", len(path))
-	}
-}
-
-func acceptCommand() {
-
-}
-
-func connectCommand() {
-
 }
 
 func (n *Node) StartNode(filepath string) {
@@ -325,22 +215,22 @@ func (n *Node) StartNode(filepath string) {
 		switch commands[0] {
 		case "interfaces":
 			// information about interfaces
-			printInterfaces(&host, w)
+			n.PrintInterfaces(w)
 			w.Flush()
 			break
 		case "li":
 			// information about interfaces
-			printInterfaces(&host, w)
+			n.PrintInterfaces(w)
 			w.Flush()
 			break
 		case "routes":
 			// routing table information
-			printRoutingTable(&host, w)
+			n.PrintRoutingTable(w)
 			w.Flush()
 			break
 		case "lr":
 			// routing table information
-			printRoutingTable(&host, w)
+			n.PrintRoutingTable(w)
 			w.Flush()
 			break
 		case "down":
@@ -363,7 +253,6 @@ func (n *Node) StartNode(filepath string) {
 				fmt.Print("Invalid number of arguments for up")
 				break
 			}
-
 			ifNum, err := strconv.Atoi(commands[1])
 			if err != nil {
 				fmt.Print("Invalid input for interface number")
@@ -381,32 +270,32 @@ func (n *Node) StartNode(filepath string) {
 				fmt.Print("Invalid number of arguments for send")
 				break
 			}
-			sendCommand(&host, line)
+			n.SendCommand(line)
 			break
 		case "q":
 			if len(commands) != 1 {
 				fmt.Print("Invalid number of arguments for q")
 				break
 			}
-			quit(&host)
+			n.Quit()
 		case "traceroute":
 			if len(commands) != 2 {
 				fmt.Print("Invalid number of arguments for traceroute")
 				break
 			}
-			traceroute(&host, commands[1])
+			n.Traceroute(commands[1])
 		case "a":
 			if len(commands) != 2 {
 				fmt.Print("Invalid number of arguments for <a>ccept")
 			}
-			acceptCommand()
+			n.AcceptCommand()
 		case "c":
 			if len(commands) != 3 {
 				fmt.Print("Invalid number of arguments for <c>onnect")
 			}
-			connectCommand()
+			n.ConnectCommand()
 		default:
-			printHelp(w)
+			n.PrintHelp(w)
 			w.Flush()
 		}
 
