@@ -60,6 +60,7 @@ type TCB struct {
 	SND            *Send
 	RCV            *Receive
 	TCBLock        sync.Mutex // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
+	ListenKey      SocketData // TODO: temporary solution
 	// TODO:
 	// pointer to retransmit queue and current segment
 }
@@ -296,12 +297,23 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
 				return
 			} else if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 {
-				tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1
-				tcbEntry.RCV.IRS = tcpHeader.SequenceNumber()
-				tcbEntry.State = SYN_RECEIVED
+				// create the new socket
+				// need to figure out what the local addr and local port would be
+				socketData := SocketData{LocalAddr: 0, LocalPort: 0, DestAddr: destAddr, DestPort: destPort}
+				newTCBEntry := &TCB{ConnectionType: 0,
+					ReceiveChan: make(chan SocketData),
+					SND:         &Send{Buffer: make([]byte, 0)},
+					RCV:         &Receive{Buffer: make([]byte, 0)}}
+				newTCBEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1
+				newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber()
+				newTCBEntry.SND.ISS = rand.Uint32()
+				newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1
+				newTCBEntry.SND.UNA = newTCBEntry.SND.ISS
+				newTCBEntry.State = SYN_RECEIVED
+				newTCBEntry.ListenKey = key
+				t.SocketTable[socketData] = newTCBEntry
 
 				// send SYN-ACK
-				tcbEntry.SND.ISS = rand.Uint32()
 				tcpHeader := header.TCPFields{
 					SrcPort:       srcPort,
 					DstPort:       destPort,
@@ -323,9 +335,6 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 
 				// send to IP layer
 				t.IPLayerChannel <- buf
-
-				tcbEntry.SND.NXT = tcbEntry.SND.ISS + 1
-				tcbEntry.SND.UNA = tcbEntry.SND.ISS
 			} else {
 				// in all other cases the packet should be dropped
 				return
@@ -368,7 +377,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 					buf := bytesArray.Bytes()
 					buf = append(buf, tcpBytes...)
 
-					tcbEntry
+					tcbEntry.ReceiveChan <- key
 					t.IPLayerChannel <- buf
 					return
 				}
@@ -418,6 +427,11 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 					tcbEntry.State = ESTABLISHED
 
 					tcbEntry.SND.Window = uint32(tcpHeader.WindowSize())
+
+					// send to accept
+					// TODO: temporary solution is just adding an additional field to store the listener reference
+					listenerEntry := t.SocketTable[tcbEntry.ListenKey]
+					listenerEntry.ReceiveChan <- key
 				}
 			} else {
 				return
@@ -431,7 +445,6 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		case CLOSE_WAIT:
 		case LAST_ACK:
 		}
-		tcbEntry.ReceiveChan <- tcpHeaderAndData
 	} else {
 		// connection does not exist
 		// TODO: what to do here, do we treat the packet as effectively dropped?
