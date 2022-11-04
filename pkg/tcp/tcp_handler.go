@@ -405,27 +405,6 @@ func (t *TCPHandler) InitHandler(data []interface{}) {
 	//	return
 	//}
 
-	var socketTableData map[SocketData]*TCB // maps are passed by reference in go
-
-	if val, ok := data[0].(map[SocketData]*TCB); ok {
-		socketTableData = val
-	} else {
-		log.Print("Unable to create socket table from handler data")
-		return
-	}
-
-	t.SocketTable = socketTableData
-
-	var ipChan chan []byte // channels are also passed by reference
-
-	if chanVal, ok := data[1].(chan []byte); ok {
-		ipChan = chanVal
-	} else {
-		log.Print("Unable to create IP layer channel from handler data")
-		return
-	}
-
-	t.IPLayerChannel = ipChan
+	t.SocketTable = make(map[SocketData]*TCB)
 
 }
-

@@ -17,6 +17,7 @@ const (
 	RIP_PROTOCOL  = 200
 	TEST_PROTOCOL = 0
 	ICMP_PROTOCOL = 1
+	TCP_PROTOCOL  = 6
 )
 
 // the node represents a machine that implements a host using IP routing and a TCP socket API built on top of the host

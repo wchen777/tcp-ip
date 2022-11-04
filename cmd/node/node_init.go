@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"tcp-ip/pkg/ip"
+	"tcp-ip/pkg/tcp"
 )
 
 // convert a uint32 ip addr to its string version
@@ -27,6 +28,20 @@ func InitRoutingTable(localIFs map[uint32]*ip.LinkInterface) *ip.RoutingTable {
 		routingTable.Table[localIFAddr] = routingTable.CreateEntry(localIFAddr, 0)
 	}
 	return &routingTable
+}
+
+/*
+	initialize a socket index table for the node
+*/
+func (n *Node) InitSocketIndexTable() {
+	n.SocketIndexTable = make([]tcp.Socket, 0)
+}
+
+/*
+	protocol handler for TCP
+*/
+func NewTCPHandler(IPLayerChan chan []byte) ip.Handler {
+	return &tcp.TCPHandler{IPLayerChannel: IPLayerChan}
 }
 
 /*
@@ -130,22 +145,30 @@ func (n *Node) SetupInterface(line []string, l int) {
 	setup handlers, RIP, traceroute, test
 */
 func (n *Node) SetupHandlers() {
+
+	// test handler init
+	testHandler := NewTestHandler()
+	testHandler.InitHandler(nil)
+
 	// initialize and fill routing table with our information
 	routingTable := InitRoutingTable(n.Host.LocalIFs)
 	n.Host.RoutingTable = routingTable
 
 	// register application handlers
 	ripHandler := NewRipHandler(n.Host.MessageChannel)
-	testHandler := NewTestHandler()
-	testHandler.InitHandler(nil)
 
 	// initialize the traceroute handler, pass in the channel to be used
 	tracerouteHandler := NewTracerouteHandler(n.Host.NextHopChannel, n.Host.EchoChannel)
+
+	// initialize TCP header
+	n.InitSocketIndexTable() // for tcp sockets
+	tcpHandler := NewTCPHandler(n.Host.TCPMessageChannel)
 
 	// register the handlers as functions for the host
 	n.Host.RegisterHandler(RIP_PROTOCOL, ripHandler)         // 200
 	n.Host.RegisterHandler(TEST_PROTOCOL, testHandler)       // 0
 	n.Host.RegisterHandler(ICMP_PROTOCOL, tracerouteHandler) // 1
+	n.Host.RegisterHandler(TCP_PROTOCOL, tcpHandler)         // 6
 
 	// for rip handler
 	dataForHandler := make([]interface{}, 0)
@@ -153,6 +176,9 @@ func (n *Node) SetupHandlers() {
 	// sending both the routingTable and the RemoteDestinations as that contains the neighbors
 	dataForHandler = append(dataForHandler, routingTable, &n.Host.RemoteDestination, n.Host.LocalIFs)
 	go ripHandler.InitHandler(dataForHandler)
+
+	// tcp handler
+	go tcpHandler.InitHandler(nil) // TODO: what else for TCP handler??
 }
 
 /*
@@ -171,7 +197,7 @@ func (n *Node) InitNodeFromLNX(filepath string) {
 
 	// read from .lnx file:
 	scanner := bufio.NewScanner(f)
-	
+
 	l := 0
 	for scanner.Scan() {
 		line := strings.Split(scanner.Text(), " ")

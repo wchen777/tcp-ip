@@ -19,17 +19,17 @@ type Host struct {
 	RemoteDestination map[uint32]uint32         // maps destination address to interface that we will send data to
 	RoutingTable      *RoutingTable
 
-	MessageChannel chan []byte // data from the rip handler
-	PacketChannel  chan IPPacket
-	NextHopChannel chan NextHopMsg // this is to pass to the icmp handler to properly communicate with the driver
-	EchoChannel    chan []byte     // data from the traceroute handler
+	MessageChannel    chan []byte // data from the rip handler
+	PacketChannel     chan IPPacket
+	NextHopChannel    chan NextHopMsg // this is to pass to the icmp handler to properly communicate with the driver
+	EchoChannel       chan []byte     // data from the traceroute handler
+	TCPMessageChannel chan []byte     // data from the TCP handler
 
 	HandlerRegistry map[int]Handler // registered handlers
 	HostConnection  *net.UDPConn    // listener and sending on host's udp port
 
 	CancelChannel chan bool // bool channel for cancelling upon q command
 
-	TCPMessageChannel chan []byte
 }
 
 const (
@@ -60,6 +60,7 @@ func (h *Host) InitHost() {
 	h.RemoteDestination = make(map[uint32]uint32)
 	h.NextHopChannel = make(chan NextHopMsg)
 	h.EchoChannel = make(chan []byte)
+	h.TCPMessageChannel = make(chan []byte)
 	h.CancelChannel = make(chan bool, 1) // unbuffered channel, unblocking send
 }
 
