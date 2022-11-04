@@ -27,6 +27,19 @@ type Node struct {
 }
 
 /*
+	node startup function
+*/
+func (n *Node) StartNode(filepath string) {
+	// initialize all necessary data for the node from the .lnx file
+	n.InitNodeFromLNX(filepath)
+
+	// start listening for the host
+	n.Host.StartHost()
+
+	n.REPL()
+}
+
+/*
 	print out help usage for the node
 */
 func (n *Node) PrintHelp(w io.Writer) {
@@ -37,6 +50,15 @@ func (n *Node) PrintHelp(w io.Writer) {
 	fmt.Fprintf(w, "routes, lr <file>\t - Print information about the route to each known destination, one per line. Optionally specify a destination file.\n")
 	fmt.Fprintf(w, "quit, q \t - Quit this node.\n")
 	fmt.Fprintf(w, "help, h \t - Show this help.\n")
+}
+
+/*
+	q command to quit out of REPL and clean up UDP sending connections
+*/
+func (n *Node) Quit() {
+	n.Host.CancelHost()
+	n.Host.HostConnection.Close()
+	os.Exit(0)
 }
 
 func (n *Node) REPL() {
@@ -147,24 +169,7 @@ func (n *Node) REPL() {
 	}
 }
 
-/*
-	q command to quit out of REPL and clean up UDP sending connections
-*/
-func (n *Node) Quit() {
-	n.Host.CancelHost()
-	n.Host.HostConnection.Close()
-	os.Exit(0)
-}
-
-func (n *Node) StartNode(filepath string) {
-
-	// start listening for the host
-	n.Host.StartHost()
-
-	n.REPL()
-}
-
-// where everything should be initialized
+// run the node
 func main() {
 
 	args := os.Args
@@ -174,9 +179,6 @@ func main() {
 	}
 
 	filepath := args[1]
-
 	node := Node{}
-
 	node.StartNode(filepath)
-
 }
