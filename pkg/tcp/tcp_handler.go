@@ -68,6 +68,8 @@ type TCB struct {
 /*
 	the TCP Handler represents the kernel's TCP stack to handle the incoming/outgoing packets to the machine
 	TCP socket API calls wrap TCP handler calls, which keep track of the TCP socket's states etc.
+
+	there is 1 TCP handler shared between all the sockets.
 */
 type TCPHandler struct {
 	SocketTable     map[SocketData]*TCB // maps tuple to representation of the socket
@@ -76,12 +78,14 @@ type TCPHandler struct {
 }
 
 /*
- * Creates a new socket and connects to an
- * address:port (active OPEN in the RFC).
- * Returns a VTCPConn on success or non-nil error on
- * failure.
- * VConnect MUST block until the connection is
- * established, or an error occurs.
+* Creates a new socket and connects to an
+* address:port (active OPEN in the RFC).
+* Returns a VTCPConn on success or non-nil error on
+* failure.
+* VConnect MUST block until the connection is
+* established, or an error occurs.
+
+* called by a "client" trying to connect to a listen socket
  */
 func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	destAddr := binary.BigEndian.Uint32(addr.To4())
@@ -149,13 +153,15 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 }
 
 /*
- * Create a new listen socket bound to the specified port on any
- * of this node's interfaces.
- * After binding, this socket moves into the LISTEN state (passive
- * open in the RFC)
- *
- * Returns a TCPListener on success.  On failure, returns an
- * appropriate error in the "error" value
+* Create a new listen socket bound to the specified port on any
+* of this node's interfaces.
+* After binding, this socket moves into the LISTEN state (passive
+* open in the RFC)
+*
+* Returns a TCPListener on success.  On failure, returns an
+* appropriate error in the "error" value
+
+* called by a "server" waiting for new connections
  */
 func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 	// TODO: check if port is already used + how do we know which interface to listen on?
@@ -168,8 +174,8 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 	}
 
 	// if the entry doesn't yet exist
-	listenerSocket := &VTCPListener{SocketTableKey: socketTableKey, TCPHandler: t}
-	newTCBEntry := &TCB{
+	listenerSocket := &VTCPListener{SocketTableKey: socketTableKey, TCPHandler: t} // the listener socket that is returned to the user
+	newTCBEntry := &TCB{                                                           // start a TCB entry on the listen state to represent the listen socket
 		State:       LISTEN,
 		ReceiveChan: make(chan SocketData),
 	}
@@ -184,6 +190,7 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 	// this will block until a SYN is received from a client that's trying to connect
 	var tcbEntry *TCB
 
+	// get tcb entry associated with the listener socket
 	if val, exists := t.SocketTable[vl.SocketTableKey]; !exists {
 		return nil, errors.New("Listener socket does not exist")
 	} else {
@@ -193,7 +200,7 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 	for {
 		select {
 		case socketData := <-tcbEntry.ReceiveChan:
-			// we should be in the established state at this point
+			// we should be in the established state at this point, as the tcb handler will have signaled the tcb channel
 			// should populate a VTCPConn
 			return &VTCPConn{SocketTableKey: socketData, TCPHandler: t}, nil
 		}
@@ -209,6 +216,7 @@ func (t *TCPHandler) Read(data []byte, vc *VTCPConn) (int, error) {
 	// check to see if the connection exists in the table, return error if it doesn't exist
 	var tcbEntry *TCB
 
+	// get tcb associated with the connection socket
 	if val, exists := t.SocketTable[vc.SocketTableKey]; !exists {
 		return -1, errors.New("Connection doesn't exist")
 	} else {
@@ -248,6 +256,7 @@ func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
 // Both socket types will need a close, so pass in socket instead
 // then we can call getTye to get the exact object
 func (t *TCPHandler) Close(socket *Socket) error {
+	// TODO:
 	return nil
 }
 
@@ -284,9 +293,9 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		case LISTEN:
 			// first check the SYN
 			log.Printf("received a segment when state is in LISTEN")
-			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
+			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 { // nothing should be ACK'd at this point
 				return
-			} else if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // received SYN while in listen
+			} else if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // received SYN while in listen, proceed to form new conn
 				// create the new socket
 				// need to figure out what the local addr and local port would be
 				socketData := SocketData{LocalAddr: 0, LocalPort: 0, DestAddr: destAddr, DestPort: destPort}
@@ -297,12 +306,12 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 					SND:         &Send{Buffer: make([]byte, 0)},
 					RCV:         &Receive{Buffer: make([]byte, 0)}}
 
-				newTCBEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 //
-				newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber()     //
-				newTCBEntry.SND.ISS = NewISS()                       // start with random ISS
-				newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1
-				newTCBEntry.SND.UNA = newTCBEntry.SND.ISS
-				newTCBEntry.State = SYN_RECEIVED // move to SYN_RECEIVED
+				newTCBEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // acknowledge the SYN's seq number (X+1)
+				newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber()     // start our stream at seq number (X)
+				newTCBEntry.SND.ISS = NewISS()                       // start with random ISS for our SYN (= Y)
+				newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1        // next to send is (Y+1)
+				newTCBEntry.SND.UNA = newTCBEntry.SND.ISS            // waiting for acknowledgement of (Y)
+				newTCBEntry.State = SYN_RECEIVED                     // move to SYN_RECEIVED
 				newTCBEntry.ListenKey = key
 				t.SocketTable[socketData] = newTCBEntry
 
@@ -325,9 +334,9 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				}
 			}
 			if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // if syn (still can reach here if ACK is 0)
-				tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1
-				tcbEntry.RCV.IRS = tcpHeader.SequenceNumber()
-				tcbEntry.SND.UNA = tcpHeader.AckNumber()
+				tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // received a new seq number (Y) from SYN-ACK (orSYN) response, set next to Y+1
+				tcbEntry.RCV.IRS = tcpHeader.SequenceNumber()     // start of client's stream is (Y)
+				tcbEntry.SND.UNA = tcpHeader.AckNumber()          // the X we sent in SYN is ACK'd, set unACK'd to X++1
 
 				if tcbEntry.SND.UNA > tcbEntry.SND.ISS {
 					tcbEntry.State = ESTABLISHED
@@ -338,8 +347,8 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 					tcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck)
 					buf := MarshallTCPHeader(&tcpHeader, destAddr)
 
-					tcbEntry.ReceiveChan <- key
-					t.IPLayerChannel <- buf // send this to the ip layer channel so it can be sent as data
+					tcbEntry.ReceiveChan <- key // signal the socket that is waiting for accepts to proceed with returning a new socket
+					t.IPLayerChannel <- buf     // send this to the ip layer channel so it can be sent as data
 					return
 				}
 
@@ -348,7 +357,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				tcbEntry.State = SYN_RECEIVED
 
 				// need to send SYN_ACK in this case
-				tcbEntry.SND.ISS = NewISS()
+				tcbEntry.SND.ISS = NewISS() // start with a new (Y)
 
 				msgtcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.ISS, tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck)
 				buf := MarshallTCPHeader(&msgtcpHeader, destAddr)
@@ -363,14 +372,15 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			log.Printf("received a segment when state is in SYN_RECEIVED")
 			// how to tell if something is a passive open or not?
 			// looking to get an ACK from sender
-			if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 {
+			if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // got a SYN while in SYN_RECEIVED, need to check if passive open?
 				if tcbEntry.ConnectionType == 0 {
 					return
 				}
 			}
-			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
+			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 { // we received an ACK responding to our SYN-ACK
+				// this ACK must acknowledge "new information" and it must be equal to (or less than) the next seq number we are trying to send
 				if tcbEntry.SND.UNA < tcpHeader.AckNumber() && tcpHeader.AckNumber() <= tcbEntry.SND.NXT {
-					tcbEntry.State = ESTABLISHED
+					tcbEntry.State = ESTABLISHED // move to transition to an established connect
 
 					tcbEntry.SND.Window = uint32(tcpHeader.WindowSize())
 
