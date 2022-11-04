@@ -24,3 +24,4 @@
 - **In what circumstances would a socket allocation be deleted? What could be hindering when doing so? Note that the state CLOSED would not be equivalent as being deleted.**
   - A socket allocation is deleted when both sides of the connection are CLOSED.
   - According to the RFC, there are 3 cases in which this finalizing state could be reached
+

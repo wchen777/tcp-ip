@@ -30,11 +30,11 @@ type TCPPacket struct {
 /*
 1         2          3          4
 ----------|----------|----------|----------
-		  UNA       NXT         UNA + WND (the last byte written)
+		  UNA       NXT         UNA + WND (boundary of what is allowed in the current window)
 */
 type Send struct {
 	Buffer []byte
-	UNA    uint32 // olded unacknowledged segment
+	UNA    uint32 // oldest unacknowledged segment
 	NXT    uint32 // next byte to send
 	Window uint32 // TODO: does this just specify the window size?
 	ISS    uint32 // initial send sequence number
@@ -54,11 +54,12 @@ type Receive struct {
 }
 
 type TCB struct {
-	State       ConnectionState
-	ReceiveChan chan []byte // some sort of channel when receiving another message on this layer
-	SND         *Send
-	RCV         *Receive
-	TCBLock     sync.Mutex // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
+	ConnectionType int
+	State          ConnectionState
+	ReceiveChan    chan SocketData // some sort of channel when receiving another message on this layer
+	SND            *Send
+	RCV            *Receive
+	TCBLock        sync.Mutex // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
 	// TODO:
 	// pointer to retransmit queue and current segment
 }
@@ -109,17 +110,23 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	}
 	newTCBEntry := &TCB{
 		State:       SYN_SENT,
-		ReceiveChan: make(chan []byte), // some sort of channel when receiving another message on this layer
+		ReceiveChan: make(chan SocketData), // some sort of channel when receiving another message on this layer
 	}
 
 	// add to the socket table
 	t.SocketTable[socketData] = newTCBEntry
 
+	// change the state
+	newTCBEntry.State = SYN_SENT
+	newTCBEntry.SND.ISS = rand.Uint32()
+	newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1
+	newTCBEntry.SND.UNA = newTCBEntry.SND.ISS
+
 	// create a SYN packet with a random sequence number
 	tcpHeader := header.TCPFields{
 		SrcPort:       0,
 		DstPort:       port,
-		SeqNum:        rand.Uint32(),
+		SeqNum:        newTCBEntry.SND.ISS,
 		AckNum:        0,
 		DataOffset:    20,
 		Flags:         header.TCPFlagSyn,
@@ -138,22 +145,14 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	// send to IP layer
 	t.IPLayerChannel <- buf
 
-	// change the state
-	newTCBEntry.State = SYN_SENT
-
 	// TODO: I think we should wait for a channel update here. RFC makes it seems like we should handle state changes on receive
 
-	// for {
-	// 	select {
-	// 	case packet := <-newTCBEntry.ReceiveChan:
-	// 		// wait for SYN + ACK from server
-	// 		// once we have received it and verified it, we set state to be established
-	// 		newTCBEntry.State = ESTABLISHED
-	// 		break
-	// 	}
-	// }
-
-	// sends ACK to server
+	for {
+		select {
+		case _ = <-newTCBEntry.ReceiveChan:
+			return newConn, nil
+		}
+	}
 
 	// return the new VTCPConn object
 	return newConn, nil
@@ -183,7 +182,7 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 	listenerSocket := &VTCPListener{SocketTableKey: socketTableKey, TCPHandler: t}
 	newTCBEntry := &TCB{
 		State:       LISTEN,
-		ReceiveChan: make(chan []byte),
+		ReceiveChan: make(chan SocketData),
 	}
 	t.SocketTable[socketTableKey] = newTCBEntry
 
@@ -204,10 +203,10 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 
 	for {
 		select {
-		case msg := <-tcbEntry.ReceiveChan:
-			// deserialize message and if it's correct, change state, then send SYN ACK
-			// continue and wait for ACK, if we do receive an ACK we have to make sure we are in the right state
-			// then break out of for loop and go into established state
+		case socketData := <-tcbEntry.ReceiveChan:
+			// we should be in the established state at this point
+			// should populate a VTCPConn
+			return &VTCPConn{SocketTableKey: socketData, TCPHandler: t}, nil
 		}
 
 	}
@@ -263,43 +262,6 @@ func (t *TCPHandler) Close(socket *Socket) error {
 	return nil
 }
 
-// TODO: maybe we can have a map of sorts or something
-func (t *TCPHandler) HandleStateListen(tcpPacket TCPPacket) {
-
-}
-
-func (t *TCPHandler) HandleStateSynSent(tcpPacket TCPPacket) {
-
-}
-
-func (t *TCPHandler) HandleStateSynReceived(tcpPacket TCPPacket) {
-
-}
-
-func (t *TCPHandler) HandleEstablished(tcpPacket TCPPacket) {
-
-}
-
-func (t *TCPHandler) HandleFinWait1(tcpPacket TCPPacket) {
-
-}
-
-func (t *TCPHandler) HandleFinWait2(tcpPacket TCPPacket) {
-
-}
-
-func (t *TCPHandler) HandleClosing(tcpPacket TCPPacket) {
-
-}
-
-func (t *TCPHandler) HandleTimeWait(tcpPacket TCPPacket) {
-
-}
-
-func (t *TCPHandler) HandleCloseWait(tcpPacket TCPPacket) {
-
-}
-
 // when we receive a packet from the IP layer
 func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	// extract the header from the data portion of the IP packet
@@ -334,12 +296,42 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
 				return
 			} else if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 {
+				tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1
+				tcbEntry.RCV.IRS = tcpHeader.SequenceNumber()
+				tcbEntry.State = SYN_RECEIVED
 
+				// send SYN-ACK
+				tcbEntry.SND.ISS = rand.Uint32()
+				tcpHeader := header.TCPFields{
+					SrcPort:       srcPort,
+					DstPort:       destPort,
+					SeqNum:        tcbEntry.SND.ISS,
+					AckNum:        tcbEntry.RCV.NXT,
+					DataOffset:    20,
+					Flags:         header.TCPFlagSyn | header.TCPFlagAck,
+					WindowSize:    65535,
+					Checksum:      0,
+					UrgentPointer: 0,
+				}
+				tcpBytes := make(header.TCP, header.TCPMinimumSize)
+				tcpBytes.Encode(&tcpHeader)
+
+				bytesArray := &bytes.Buffer{}
+				binary.Write(bytesArray, binary.BigEndian, destAddr)
+				buf := bytesArray.Bytes()
+				buf = append(buf, tcpBytes...)
+
+				// send to IP layer
+				t.IPLayerChannel <- buf
+
+				tcbEntry.SND.NXT = tcbEntry.SND.ISS + 1
+				tcbEntry.SND.UNA = tcbEntry.SND.ISS
 			} else {
 				// in all other cases the packet should be dropped
 				return
 			}
 		case SYN_SENT:
+			// looking to get a SYN ACK
 			log.Printf("received a segment when state is in SYN_SENT")
 			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
 				if (tcpHeader.AckNumber() <= tcbEntry.SND.ISS) || (tcpHeader.AckNumber() > tcbEntry.SND.NXT) {
@@ -347,8 +339,91 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 					return
 				}
 			}
+			if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 {
+				tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1
+				tcbEntry.RCV.IRS = tcpHeader.SequenceNumber()
+				tcbEntry.SND.UNA = tcpHeader.AckNumber()
+
+				if tcbEntry.SND.UNA > tcbEntry.SND.ISS {
+					tcbEntry.State = ESTABLISHED
+
+					// TODO: refactor this so it happens in a resusable function
+					tcbEntry.SND.ISS = rand.Uint32()
+					tcpHeader := header.TCPFields{
+						SrcPort:       srcPort,
+						DstPort:       destPort,
+						SeqNum:        tcbEntry.SND.NXT,
+						AckNum:        tcbEntry.RCV.NXT,
+						DataOffset:    20,
+						Flags:         header.TCPFlagAck,
+						WindowSize:    65535,
+						Checksum:      0,
+						UrgentPointer: 0,
+					}
+					tcpBytes := make(header.TCP, header.TCPMinimumSize)
+					tcpBytes.Encode(&tcpHeader)
+
+					bytesArray := &bytes.Buffer{}
+					binary.Write(bytesArray, binary.BigEndian, destAddr)
+					buf := bytesArray.Bytes()
+					buf = append(buf, tcpBytes...)
+
+					tcbEntry
+					t.IPLayerChannel <- buf
+					return
+				}
+
+				// (simultaneous open)
+				// enter SYN_RECEIVED
+				tcbEntry.State = SYN_RECEIVED
+
+				// need to send SYN_ACK in this case
+				tcbEntry.SND.ISS = rand.Uint32()
+				msgtcpHeader := header.TCPFields{
+					SrcPort:       srcPort,
+					DstPort:       destPort,
+					SeqNum:        tcbEntry.SND.ISS,
+					AckNum:        tcbEntry.RCV.NXT,
+					DataOffset:    20,
+					Flags:         header.TCPFlagSyn | header.TCPFlagAck,
+					WindowSize:    65535,
+					Checksum:      0,
+					UrgentPointer: 0,
+				}
+				tcpBytes := make(header.TCP, header.TCPMinimumSize)
+				tcpBytes.Encode(&msgtcpHeader)
+
+				bytesArray := &bytes.Buffer{}
+				binary.Write(bytesArray, binary.BigEndian, destAddr)
+				buf := bytesArray.Bytes()
+				buf = append(buf, tcpBytes...)
+
+				t.IPLayerChannel <- buf
+
+				tcbEntry.SND.Window = uint32(tcpHeader.WindowSize())
+				return
+			}
+			// TODO: if the length of the payload is greater than 0, we need to do some processing?
 		case SYN_RECEIVED:
+			log.Printf("received a segment when state is in SYN_RECEIVED")
+			// how to tell if something is a passive open or not?
+			// looking to get an ACK from sender
+			if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 {
+				if tcbEntry.ConnectionType == 0 {
+					return
+				}
+			}
+			if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
+				if tcbEntry.SND.UNA < tcpHeader.AckNumber() && tcpHeader.AckNumber() <= tcbEntry.SND.NXT {
+					tcbEntry.State = ESTABLISHED
+
+					tcbEntry.SND.Window = uint32(tcpHeader.WindowSize())
+				}
+			} else {
+				return
+			}
 		case ESTABLISHED:
+			log.Printf("received a segment when state is in SYN")
 		case FIN_WAIT_1:
 		case FIN_WAIT_2:
 		case CLOSING:
