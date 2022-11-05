@@ -255,12 +255,8 @@ func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
 
 // Both socket types will need a close, so pass in socket instead
 // then we can call getTye to get the exact object
-<<<<<<< HEAD
 func (t *TCPHandler) Close(socket *Socket) error {
 	// TODO:
-=======
-func (t *TCPHandler) Close(socket Socket) error {
->>>>>>> e0228f6 (implementation of commands)
 	return nil
 }
 
