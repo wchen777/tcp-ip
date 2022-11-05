@@ -11,6 +11,10 @@ func (vl *VTCPListener) GetType() SocketType {
 	return LISTENER
 }
 
+func (vl *VTCPListener) GetSocketTableKey() SocketData {
+	return vl.SocketTableKey
+}
+
 /*
  * Waits for new TCP connections on this listen socket.  If no new
  * clients have connected, this function MUST block until a new

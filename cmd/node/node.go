@@ -70,7 +70,7 @@ func (n *Node) REPL() {
 	// for table input
 	w := new(tabwriter.Writer)
 	// minwidth, tabwidth, padding, padchar, flags
-	w.Init(os.Stdout, 16, 10, 0, '\t', 0)
+	w.Init(os.Stdout, 16, 10, 4, '\t', 0)
 
 	fmt.Print("> ")
 	for scanner.Scan() {
@@ -167,17 +167,34 @@ func (n *Node) REPL() {
 		case "c":
 			if len(commands) != 3 {
 				fmt.Print("Invalid number of arguments for <c>onnect")
+				break
 			}
 			ipAddr := net.ParseIP(commands[1])
 			port, err := strconv.Atoi(commands[2])
 			if err != nil {
 				fmt.Printf("Invalid port number: %s\n", commands[2])
+				break
 			}
 			socketNum, err := n.ConnectCommand(ipAddr, uint16(port))
 			if err != nil {
 				fmt.Printf("Connect error: %s\n", err)
+				break
 			}
 			fmt.Printf("v_connect() returned %d\n", socketNum)
+		case "ls":
+			if len(commands) != 1 {
+				fmt.Print("Invalid number of arguments for ls")
+				break
+			}
+			n.ListSocketCommand(w)
+			w.Flush()
+		case "sockets":
+			if len(commands) != 1 {
+				fmt.Print("Invalid number of arguments for ls")
+				break
+			}
+			n.ListSocketCommand(w)
+			w.Flush()
 		default:
 			n.PrintHelp(w)
 			w.Flush()

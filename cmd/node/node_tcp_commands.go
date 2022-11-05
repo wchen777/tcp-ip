@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"tcp-ip/pkg/tcp"
@@ -9,6 +10,7 @@ import (
 
 func (n *Node) AcceptCommand(port uint16) error {
 	listener, err := n.VListen(port)
+	n.AddToTable(listener)
 	if err != nil {
 		return err
 	}
@@ -52,6 +54,13 @@ func (n *Node) ConnectCommand(destAddr net.IP, port uint16) (int, error) {
 	return n.AddToTable(newConn), nil
 }
 
-// func (n *Node) ListSocketCommand() {
-// 	for n.SocketIndexTable()
-// }
+func (n *Node) ListSocketCommand(w io.Writer) {
+	fmt.Fprintf(w, "socket\t local-addr\t port\t dst-addr\t port\t status\n")
+	for i, socket := range n.SocketIndexTable {
+		socketData := socket.GetSocketTableKey()
+		localAddr := addrNumToIP(socketData.LocalAddr)
+		destAddr := addrNumToIP(socketData.DestAddr)
+		status := tcp.SocketStateToString(n.TCPHandler.SocketTable[socketData].State)
+		fmt.Fprintf(w, "%d\t %s\t %d\t %s\t %d\t %s\n", i, localAddr, socketData.LocalPort, destAddr, socketData.DestPort, status)
+	}
+}

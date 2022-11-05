@@ -11,6 +11,10 @@ func (vc *VTCPConn) GetType() SocketType {
 	return CONNECTION
 }
 
+func (vc *VTCPConn) GetSocketTableKey() SocketData {
+	return vc.SocketTableKey
+}
+
 /*
   * Reads data from the TCP connection (RECEIVE in RFC)
   * Data is read into slice passed as argument.

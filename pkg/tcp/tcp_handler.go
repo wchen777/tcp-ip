@@ -76,7 +76,7 @@ type TCPHandler struct {
 	SocketTableLock sync.Mutex          // TODO: figure out if this is necessary
 	LocalAddr       uint32
 	CurrentPort     uint16
-	Listeners       // store current listeners so we can check to see if we're connecting to a listener
+	Listeners       []SocketData // store current listeners so we can check to see if we're connecting to a listener
 }
 
 /*
@@ -123,7 +123,7 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 
 	// create a SYN packet with a random sequence number
 	tcpHeader := header.TCPFields{
-		SrcPort:       0,
+		SrcPort:       socketData.LocalPort,
 		DstPort:       port,
 		SeqNum:        newTCBEntry.SND.ISS,
 		AckNum:        0,
@@ -184,6 +184,7 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 	// go into the LISTEN state
 	log.Print(t)
 	socketTableKey := SocketData{LocalAddr: t.LocalAddr, LocalPort: port, DestAddr: 0, DestPort: 0}
+	t.Listeners = append(t.Listeners, socketTableKey)
 	log.Printf("socket data structure before sending: %v\n", socketTableKey)
 	if _, exists := t.SocketTable[socketTableKey]; exists {
 		return nil, errors.New("Listener socket already exists")
@@ -296,7 +297,16 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	destAddr := binary.BigEndian.Uint32(packet.Header.Src.To4())
 
 	// check the table for the connection
-	key := SocketData{LocalAddr: localAddr, LocalPort: srcPort, DestAddr: 0, DestPort: destPort}
+	key := SocketData{LocalAddr: localAddr, LocalPort: srcPort, DestAddr: destAddr, DestPort: destPort}
+	listenerKey := SocketData{LocalAddr: localAddr, LocalPort: srcPort, DestAddr: 0, DestPort: 0}
+
+	// if the key for the listener exists and there isn't a key for the established conn, it is a listener
+	if _, exists := t.SocketTable[key]; !exists {
+		if _, exists := t.SocketTable[listenerKey]; exists {
+			key = listenerKey
+		}
+	}
+
 	log.Printf("socket data structure after receiving: %v\n", key)
 	if tcbEntry, exists := t.SocketTable[key]; exists {
 		// connection exists
@@ -315,8 +325,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			} else if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // received SYN while in listen, proceed to form new conn
 				// create the new socket
 				// need to figure out what the local addr and local port would be
-				socketData := SocketData{LocalAddr: localAddr, LocalPort: t.CurrentPort, DestAddr: destAddr, DestPort: destPort}
-				t.CurrentPort++
+				socketData := SocketData{LocalAddr: localAddr, LocalPort: srcPort, DestAddr: destAddr, DestPort: destPort}
 
 				// create a new tcb entry to represent the spawned socket connection
 				newTCBEntry := &TCB{ConnectionType: 0,
@@ -331,13 +340,14 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				newTCBEntry.SND.UNA = newTCBEntry.SND.ISS            // waiting for acknowledgement of (Y)
 				newTCBEntry.State = SYN_RECEIVED                     // move to SYN_RECEIVED
 				newTCBEntry.ListenKey = key
+				log.Printf("adding this socket data for new entry: %v\n", socketData)
 				t.SocketTable[socketData] = newTCBEntry
 
 				// send SYN-ACK
 				buf := &bytes.Buffer{}
 				binary.Write(buf, binary.BigEndian, localAddr)
 				binary.Write(buf, binary.BigEndian, destAddr)
-				tcpHeader := CreateTCPHeader(srcPort, destPort, newTCBEntry.SND.ISS, newTCBEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck)
+				tcpHeader := CreateTCPHeader(socketData.LocalPort, destPort, newTCBEntry.SND.ISS, newTCBEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck)
 				bufToSend := buf.Bytes()
 				log.Printf("bytes to send: %v\n", bufToSend)
 				bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, destAddr)...)
@@ -363,15 +373,19 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 
 				if tcbEntry.SND.UNA > tcbEntry.SND.ISS {
 					tcbEntry.State = ESTABLISHED
-
 					tcbEntry.SND.ISS = NewISS()
 
 					// create the tcp header with the ____
-					tcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck)
-					buf := MarshallTCPHeader(&tcpHeader, destAddr)
+					newTCPHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck)
+					buf := &bytes.Buffer{}
+					binary.Write(buf, binary.BigEndian, localAddr)
+					binary.Write(buf, binary.BigEndian, destAddr)
+					bufToSend := buf.Bytes()
+					bufToSend = append(bufToSend, MarshallTCPHeader(&newTCPHeader, destAddr)...)
 
 					tcbEntry.ReceiveChan <- key // signal the socket that is waiting for accepts to proceed with returning a new socket
-					t.IPLayerChannel <- buf     // send this to the ip layer channel so it can be sent as data
+
+					t.IPLayerChannel <- bufToSend // send this to the ip layer channel so it can be sent as data
 					return
 				}
 
