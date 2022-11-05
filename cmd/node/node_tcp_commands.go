@@ -55,12 +55,12 @@ func (n *Node) ConnectCommand(destAddr net.IP, port uint16) (int, error) {
 }
 
 func (n *Node) ListSocketCommand(w io.Writer) {
-	fmt.Fprintf(w, "socket\t local-addr\t port\t dst-addr\t port\t status\n")
+	fmt.Fprintf(w, "socket\tlocal-addr\tport\tdst-addr\tport\tstatus\n")
 	for i, socket := range n.SocketIndexTable {
 		socketData := socket.GetSocketTableKey()
 		localAddr := addrNumToIP(socketData.LocalAddr)
 		destAddr := addrNumToIP(socketData.DestAddr)
 		status := tcp.SocketStateToString(n.TCPHandler.SocketTable[socketData].State)
-		fmt.Fprintf(w, "%d\t %s\t %d\t %s\t %d\t %s\n", i, localAddr, socketData.LocalPort, destAddr, socketData.DestPort, status)
+		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%d\t%s\n", i, localAddr, socketData.LocalPort, destAddr, socketData.DestPort, status)
 	}
 }
