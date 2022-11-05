@@ -31,5 +31,5 @@ func (vl *VTCPListener) VAccept() (*VTCPConn, error) {
  */
 func (vl *VTCPListener) VClose() error {
 	// use the tcp handler in the listener struct to cleanup from the table
-	vl.TCPHandler.Close(vl)
+	return vl.TCPHandler.Close(vl)
 }

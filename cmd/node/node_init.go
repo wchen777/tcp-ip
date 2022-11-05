@@ -69,10 +69,14 @@ func NewTestHandler() ip.Handler {
 	reads the first line of the .lnx file to setup the host's udp conn
 */
 func (n *Node) SetupHost(line []string) {
+
 	// set up our udp listener on the given host number
 	if len(line) != 2 {
 		log.Fatal("Ill formatted .lnx file, first line must be <host_addr> <host_port>")
 	}
+
+	n.Host = &ip.Host{}
+
 	listenString := fmt.Sprintf("%s:%s", line[0], line[1])
 
 	listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
@@ -192,9 +196,6 @@ func (n *Node) InitNodeFromLNX(filepath string) {
 		log.Fatal(err)
 	}
 
-	// initialize host fields for the nod's host
-	n.Host.InitHost()
-
 	// read from .lnx file:
 	scanner := bufio.NewScanner(f)
 
@@ -204,6 +205,8 @@ func (n *Node) InitNodeFromLNX(filepath string) {
 		if l == 0 {
 			// line 1:
 			n.SetupHost(line)
+			// initialize host fields for the nod's host
+			n.Host.InitHost()
 		} else {
 			// line 2+
 			n.SetupInterface(line, l)

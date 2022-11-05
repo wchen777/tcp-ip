@@ -149,7 +149,6 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	}
 
 	// return the new VTCPConn object
-	return newConn, nil
 }
 
 /*
@@ -165,7 +164,9 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
  */
 func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 	// TODO: check if port is already used + how do we know which interface to listen on?
-
+	if port <= 1024 {
+		return nil, errors.New("Invalid port number")
+	}
 	// initialize tcb with listen state, return listener socket conn
 	// go into the LISTEN state
 	socketTableKey := SocketData{LocalAddr: 0, LocalPort: port, DestAddr: 0, DestPort: 0}
@@ -208,7 +209,6 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 	}
 
 	// create entry + return once connection is established
-	return nil, nil
 }
 
 // corresponds to RECEIVE in RFC
@@ -255,8 +255,12 @@ func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
 
 // Both socket types will need a close, so pass in socket instead
 // then we can call getTye to get the exact object
+<<<<<<< HEAD
 func (t *TCPHandler) Close(socket *Socket) error {
 	// TODO:
+=======
+func (t *TCPHandler) Close(socket Socket) error {
+>>>>>>> e0228f6 (implementation of commands)
 	return nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -155,12 +156,28 @@ func (n *Node) REPL() {
 			if len(commands) != 2 {
 				fmt.Print("Invalid number of arguments for <a>ccept")
 			}
-			n.AcceptCommand()
+			port, err := strconv.Atoi(commands[1])
+			if err != nil {
+				fmt.Printf("Invalid port number: %s\n", commands[1])
+			}
+			err = n.AcceptCommand(uint16(port))
+			if err != nil {
+				fmt.Printf("Accept error: %s\n", err)
+			}
 		case "c":
 			if len(commands) != 3 {
 				fmt.Print("Invalid number of arguments for <c>onnect")
 			}
-			n.ConnectCommand()
+			ipAddr := net.ParseIP(commands[1])
+			port, err := strconv.Atoi(commands[2])
+			if err != nil {
+				fmt.Printf("Invalid port number: %s\n", commands[2])
+			}
+			socketNum, err := n.ConnectCommand(ipAddr, uint16(port))
+			if err != nil {
+				fmt.Printf("Connect error: %s\n", err)
+			}
+			fmt.Printf("v_connect() returned %d\n", socketNum)
 		default:
 			n.PrintHelp(w)
 			w.Flush()
