@@ -1,10 +1,9 @@
 package tcp
 
 import (
-	"bytes"
-	"encoding/binary"
-	"github.com/google/netstack/tcpip/header"
 	"math/rand"
+
+	"github.com/google/netstack/tcpip/header"
 )
 
 // tcp_handler_utils houses reusable functions for the tcp handler
@@ -27,11 +26,7 @@ func MarshallTCPHeader(tcpHeader *header.TCPFields, destAddr uint32) []byte {
 	tcpBytes := make(header.TCP, header.TCPMinimumSize)
 	tcpBytes.Encode(tcpHeader)
 
-	bytesArray := &bytes.Buffer{}
-	_ = binary.Write(bytesArray, binary.BigEndian, destAddr) // assume this does not fail
-	buf := bytesArray.Bytes()
-	buf = append(buf, tcpBytes...)
-	return buf
+	return tcpBytes
 }
 
 func NewISS() uint32 {

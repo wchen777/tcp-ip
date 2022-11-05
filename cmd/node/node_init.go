@@ -40,8 +40,15 @@ func (n *Node) InitSocketIndexTable() {
 /*
 	protocol handler for TCP
 */
-func NewTCPHandler(IPLayerChan chan []byte) ip.Handler {
-	return &tcp.TCPHandler{IPLayerChannel: IPLayerChan}
+func NewTCPHandler(IPLayerChan chan []byte, localIFs map[uint32]*ip.LinkInterface) ip.Handler {
+
+	var addr uint32
+	for key := range localIFs { // get first addr from our interfaces table TODO: temp fix
+		addr = key
+		break
+	}
+
+	return &tcp.TCPHandler{IPLayerChannel: IPLayerChan, CurrentPort: 1025, LocalAddr: addr}
 }
 
 /*
@@ -166,7 +173,7 @@ func (n *Node) SetupHandlers() {
 
 	// initialize TCP header
 	n.InitSocketIndexTable() // for tcp sockets
-	tcpHandler := NewTCPHandler(n.Host.TCPMessageChannel)
+	tcpHandler := NewTCPHandler(n.Host.TCPMessageChannel, n.Host.LocalIFs)
 
 	// register the handlers as functions for the host
 	n.Host.RegisterHandler(RIP_PROTOCOL, ripHandler)         // 200
@@ -174,12 +181,22 @@ func (n *Node) SetupHandlers() {
 	n.Host.RegisterHandler(ICMP_PROTOCOL, tracerouteHandler) // 1
 	n.Host.RegisterHandler(TCP_PROTOCOL, tcpHandler)         // 6
 
+	var tcpHandlerNode *tcp.TCPHandler
+
+	if val, ok := tcpHandler.(*tcp.TCPHandler); ok {
+		tcpHandlerNode = val
+	} else {
+		log.Print("Unable to cast TCP handler")
+	}
+
+	n.TCPHandler = tcpHandlerNode
+
 	// for rip handler
-	dataForHandler := make([]interface{}, 0)
+	dataForRipHandler := make([]interface{}, 0)
 
 	// sending both the routingTable and the RemoteDestinations as that contains the neighbors
-	dataForHandler = append(dataForHandler, routingTable, &n.Host.RemoteDestination, n.Host.LocalIFs)
-	go ripHandler.InitHandler(dataForHandler)
+	dataForRipHandler = append(dataForRipHandler, routingTable, &n.Host.RemoteDestination, n.Host.LocalIFs)
+	go ripHandler.InitHandler(dataForRipHandler)
 
 	// tcp handler
 	go tcpHandler.InitHandler(nil) // TODO: what else for TCP handler??

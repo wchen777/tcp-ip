@@ -280,12 +280,15 @@ func (h *Host) ReadFromHandler() {
 			}
 
 			// TODO: make sure that the first four bytes will be the address
-			destAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
+			srcAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
+			log.Printf("source address received: %d\n", srcAddr)
+			destAddr := binary.BigEndian.Uint32(data[ADDR_SIZE : 2*ADDR_SIZE])
+			log.Printf("destination address recevied: %d\n", destAddr)
 			entry := h.RoutingTable.Table[destAddr]
 
 			if addrOfInterface, exists := h.RemoteDestination[entry.NextHop]; exists {
 				// addrOfInterface is the new source address
-				packet := h.CreateIPPacket(addrOfInterface, destAddr, data[ADDR_SIZE:], 1, 16)
+				packet := h.CreateIPPacket(srcAddr, destAddr, data[2*ADDR_SIZE:], 6, 16)
 				checkSum, err := computeChecksum(packet)
 				if err != nil {
 					log.Print(err)

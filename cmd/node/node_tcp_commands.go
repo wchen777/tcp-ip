@@ -51,3 +51,7 @@ func (n *Node) ConnectCommand(destAddr net.IP, port uint16) (int, error) {
 
 	return n.AddToTable(newConn), nil
 }
+
+// func (n *Node) ListSocketCommand() {
+// 	for n.SocketIndexTable()
+// }

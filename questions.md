@@ -35,7 +35,8 @@ If SND.UNA < SEG.ACK =< SND.NXT, then enter ESTABLISHED state --> why do we not 
 - how to maintain a listener socket in our socket table once a new connection is established?
   - do we create a new tcb with the new state variables and reset the listener to be in listen state and reset variables as well? Should the listener be the one handling the handshake? 
 
-
+- reusing ports
+- tcp socket accept+connect to itself 
 
 ### TODOS: 
 

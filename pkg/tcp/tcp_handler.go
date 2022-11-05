@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"log"
-	"math/rand"
 	"net"
 	"sync"
 	"tcp-ip/pkg/ip"
@@ -75,6 +74,9 @@ type TCPHandler struct {
 	SocketTable     map[SocketData]*TCB // maps tuple to representation of the socket
 	IPLayerChannel  chan []byte         // connect with the host layer about TCP packet
 	SocketTableLock sync.Mutex          // TODO: figure out if this is necessary
+	LocalAddr       uint32
+	CurrentPort     uint16
+	Listeners       // store current listeners so we can check to see if we're connecting to a listener
 }
 
 /*
@@ -91,7 +93,8 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	destAddr := binary.BigEndian.Uint32(addr.To4())
 
 	// TODO: how to get the local address and local port?
-	socketData := SocketData{LocalAddr: 0, LocalPort: 0, DestAddr: destAddr, DestPort: port}
+	socketData := SocketData{LocalAddr: t.LocalAddr, LocalPort: t.CurrentPort, DestAddr: destAddr, DestPort: port}
+	t.CurrentPort += 1
 
 	if _, exists := t.SocketTable[socketData]; exists {
 		return nil, errors.New("Socket for this address already exists")
@@ -105,6 +108,8 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	newTCBEntry := &TCB{
 		State:       SYN_SENT,
 		ReceiveChan: make(chan SocketData), // some sort of channel when receiving another message on this layer
+		SND:         &Send{},
+		RCV:         &Receive{},
 	}
 
 	// add to the socket table
@@ -112,7 +117,7 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 
 	// change the state
 	newTCBEntry.State = SYN_SENT
-	newTCBEntry.SND.ISS = rand.Uint32()
+	newTCBEntry.SND.ISS = NewISS()
 	newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1
 	newTCBEntry.SND.UNA = newTCBEntry.SND.ISS
 
@@ -128,16 +133,24 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
-	tcpBytes := make(header.TCP, header.TCPMinimumSize)
-	tcpBytes.Encode(&tcpHeader)
 
-	bytesArray := &bytes.Buffer{}
-	binary.Write(bytesArray, binary.BigEndian, destAddr)
-	buf := bytesArray.Bytes()
-	buf = append(buf, tcpBytes...)
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.BigEndian, t.LocalAddr)
+	binary.Write(buf, binary.BigEndian, destAddr)
+	bufToSend := buf.Bytes()
+
+	bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, destAddr)...)
+	// tcpBytes := make(header.TCP, header.TCPMinimumSize)
+	// tcpBytes.Encode(&tcpHeader)
+
+	// bytesArray := &bytes.Buffer{}
+	// binary.Write(bytesArray, binary.BigEndian, destAddr)
+	// buf := bytesArray.Bytes()
+	// buf = append(buf, tcpBytes...)
 
 	// send to IP layer
-	t.IPLayerChannel <- buf
+	log.Print("sending tcp to channel")
+	t.IPLayerChannel <- bufToSend
 
 	// TODO: I think we should wait for a channel update here. RFC makes it seems like we should handle state changes on receive
 
@@ -169,7 +182,9 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 	}
 	// initialize tcb with listen state, return listener socket conn
 	// go into the LISTEN state
-	socketTableKey := SocketData{LocalAddr: 0, LocalPort: port, DestAddr: 0, DestPort: 0}
+	log.Print(t)
+	socketTableKey := SocketData{LocalAddr: t.LocalAddr, LocalPort: port, DestAddr: 0, DestPort: 0}
+	log.Printf("socket data structure before sending: %v\n", socketTableKey)
 	if _, exists := t.SocketTable[socketTableKey]; exists {
 		return nil, errors.New("Listener socket already exists")
 	}
@@ -265,6 +280,7 @@ func (t *TCPHandler) Close(socket Socket) error {
 */
 func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	// extract the header from the data portion of the IP packet
+	log.Print("Received TCP packet")
 	tcpData := packet.Data
 	tcpHeaderAndData := tcpData[0:packet.Header.TotalLen]
 	tcpHeader := header.TCP(tcpHeaderAndData)
@@ -280,7 +296,8 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	destAddr := binary.BigEndian.Uint32(packet.Header.Src.To4())
 
 	// check the table for the connection
-	key := SocketData{LocalAddr: localAddr, LocalPort: srcPort, DestAddr: destAddr, DestPort: destPort}
+	key := SocketData{LocalAddr: localAddr, LocalPort: srcPort, DestAddr: 0, DestPort: destPort}
+	log.Printf("socket data structure after receiving: %v\n", key)
 	if tcbEntry, exists := t.SocketTable[key]; exists {
 		// connection exists
 		// TODO: call appropriate function for each state
@@ -298,7 +315,8 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			} else if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // received SYN while in listen, proceed to form new conn
 				// create the new socket
 				// need to figure out what the local addr and local port would be
-				socketData := SocketData{LocalAddr: 0, LocalPort: 0, DestAddr: destAddr, DestPort: destPort}
+				socketData := SocketData{LocalAddr: localAddr, LocalPort: t.CurrentPort, DestAddr: destAddr, DestPort: destPort}
+				t.CurrentPort++
 
 				// create a new tcb entry to represent the spawned socket connection
 				newTCBEntry := &TCB{ConnectionType: 0,
@@ -316,11 +334,16 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				t.SocketTable[socketData] = newTCBEntry
 
 				// send SYN-ACK
-				tcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.ISS, tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck)
-				buf := MarshallTCPHeader(&tcpHeader, destAddr)
+				buf := &bytes.Buffer{}
+				binary.Write(buf, binary.BigEndian, localAddr)
+				binary.Write(buf, binary.BigEndian, destAddr)
+				tcpHeader := CreateTCPHeader(srcPort, destPort, newTCBEntry.SND.ISS, newTCBEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck)
+				bufToSend := buf.Bytes()
+				log.Printf("bytes to send: %v\n", bufToSend)
+				bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, destAddr)...)
 
 				// send to IP layer
-				t.IPLayerChannel <- buf
+				t.IPLayerChannel <- bufToSend
 			} else {
 				// in all other cases the packet should be dropped
 				return
