@@ -37,6 +37,7 @@ type Send struct {
 	NXT    uint32 // next byte to send
 	Window uint32 // TODO: does this just specify the window size?
 	ISS    uint32 // initial send sequence number
+	LBW    uint32
 }
 
 /*
@@ -45,11 +46,13 @@ type Send struct {
 		RCV.NXT    RCV.NXT
 				  +RCV.WND
 */
+// smaller size --> two separate sizes (circular + sequence space) additional pointers --> buffer vs. sequence space
 type Receive struct {
 	Buffer []byte
 	NXT    uint32 // the next sequence number expected to receive
 	Window uint32
 	IRS    uint32 // initial receive sequence number
+	LBR    uint32 // keeps track of the next byte to be read
 }
 
 type TCB struct {
@@ -59,9 +62,14 @@ type TCB struct {
 	SND            *Send
 	RCV            *Receive
 	TCBLock        sync.Mutex // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
-	ListenKey      SocketData // TODO: temporary solution
+	ListenKey      SocketData // keeps track of the listener to properly notify the listener
 	// TODO:
 	// pointer to retransmit queue and current segment
+
+	// Pending connections, for when a SYN is sent but the listener is not listening
+	PendingConnCond    sync.Cond
+	PendingConnMutex   sync.Mutex
+	PendingConnections []SocketData
 }
 
 /*
@@ -196,6 +204,7 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 		State:       LISTEN,
 		ReceiveChan: make(chan SocketData),
 	}
+	newTCBEntry.PendingConnCond = *sync.NewCond(&newTCBEntry.PendingConnMutex)
 	t.SocketTable[socketTableKey] = newTCBEntry
 
 	return listenerSocket, nil
@@ -205,26 +214,30 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 // can pass in the socket object that is making the call
 func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 	// this will block until a SYN is received from a client that's trying to connect
-	var tcbEntry *TCB
+	var listenerTCBEntry *TCB
 
 	// get tcb entry associated with the listener socket
 	if val, exists := t.SocketTable[vl.SocketTableKey]; !exists {
 		return nil, errors.New("Listener socket does not exist")
 	} else {
-		tcbEntry = val
+		listenerTCBEntry = val
 	}
 
-	for {
-		select {
-		case socketData := <-tcbEntry.ReceiveChan:
-			// we should be in the established state at this point, as the tcb handler will have signaled the tcb channel
-			// should populate a VTCPConn
-			return &VTCPConn{SocketTableKey: socketData, TCPHandler: t}, nil
-		}
-
+	// if we already have an existing pending connection in the queue, just pop it and return the new connection
+	if len(listenerTCBEntry.PendingConnections) > 0 {
+		connEntry := listenerTCBEntry.PendingConnections[0]
+		listenerTCBEntry.PendingConnections = listenerTCBEntry.PendingConnections[1:]
+		return &VTCPConn{SocketTableKey: connEntry, TCPHandler: t}, nil
 	}
 
-	// create entry + return once connection is established
+	listenerTCBEntry.PendingConnMutex.Lock()
+	for len(listenerTCBEntry.PendingConnections) == 0 {
+		listenerTCBEntry.PendingConnCond.Wait()
+	}
+	connEntry := listenerTCBEntry.PendingConnections[0]
+	listenerTCBEntry.PendingConnections = listenerTCBEntry.PendingConnections[1:]
+	defer listenerTCBEntry.PendingConnMutex.Unlock()
+	return &VTCPConn{SocketTableKey: connEntry, TCPHandler: t}, nil
 }
 
 // corresponds to RECEIVE in RFC
@@ -260,6 +273,14 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (int, error) {
 
 	// Per section 3.9, we can check the state of the connection and handle according to the state
 	switch tcbEntry.State {
+	case ESTABLISHED: 
+		amountToTransfer := len(data)
+		// can be greater than window size 
+		amountTransferred := 0 
+
+		for amountTransferred 
+		numWindows := len(data) / int(tcbEntry.SND.Window)
+
 
 	}
 	return 0, nil
@@ -424,7 +445,10 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 					// send to accept
 					// TODO: temporary solution is just adding an additional field to store the listener reference
 					listenerEntry := t.SocketTable[tcbEntry.ListenKey]
-					listenerEntry.ReceiveChan <- key
+					listenerEntry.PendingConnections = append(listenerEntry.PendingConnections, key)
+					listenerEntry.PendingConnMutex.Lock()
+					listenerEntry.PendingConnCond.Signal()
+					listenerEntry.PendingConnMutex.Unlock()
 				}
 			} else {
 				return
