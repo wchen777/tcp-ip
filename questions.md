@@ -20,7 +20,7 @@ Window vs. buffer terminology
 - When the indices within the buffer wrap around, how do we keep track of it's distance relative to the (initial) sequence number? 
   - do we need to keep track of how many times the indices wrapped around?
   - UNA, NXT should be in terms of sequence number of buffer indicies? For example if you have UNA at 20, does that mean it's 20+ISS or 20+(MAX_BUF*n)+ISS? 
-  - Or should we keep track of where the bounds of the buffer are relative to the ISS? But how do we handle wrapping around? 
+  - Or should we keep track of where the bounds of the buffer are relative to the ISS? But how do we handle wrapping around? Or are the bounds of the buffer shifting rather than wrapping around?
 
 ### TODOS: 
 
