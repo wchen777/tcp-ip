@@ -22,6 +22,24 @@ Window vs. buffer terminology
   - UNA, NXT should be in terms of sequence number of buffer indicies? For example if you have UNA at 20, does that mean it's 20+ISS or 20+(MAX_BUF*n)+ISS? 
   - Or should we keep track of where the bounds of the buffer are relative to the ISS? But how do we handle wrapping around? Or are the bounds of the buffer shifting rather than wrapping around?
 
+Our problem:
+- UNA and NXT are in terms of buffer (for send)
+  - i.e. buffer in sequence number address space starts at ISS, but UNA starts at 0 
+- we keep sending and writing data, such that UNA and NXT are incremented to a value greater than MAXBUF
+- UNA and NXT wrap to 0
+- need a way to keep track of UNA and NXT relative to the sequence number space
+- the reason we have this is so that when the application writes to the buffer, we are able to wrap around the end of the buffer until UNA to determine when the application is able to write 
+
+Nick's ideas:
+- Two ideas
+  - keep track of two versions of UNA (and NXT) alongside eachother, uint16 UNA_IND (for the buffer) and uint32 UNA_SEQ (sequence space)
+    - always update both at the same time, so that when we want to index into the buffer, we can use UNA_IND, or if we want to send out an ACK, use UNA_SEQ
+  - keep track of 1 uint32 UNA
+    - whenever we want to index into the buffer, mod by 2^16, and use that value as our buffer index
+    - this handles the wrap-arounds for the buffer
+    - send this UNA as absolute SEQ number
+
+
 ### TODOS: 
 
 **tcp handler:**
