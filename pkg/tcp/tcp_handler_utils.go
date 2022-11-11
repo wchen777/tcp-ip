@@ -33,6 +33,10 @@ func NewISS() uint32 {
 	return rand.Uint32()
 }
 
+func SequenceToBufferInd(val uint32) uint32 {
+	return val % (1 << 16)
+}
+
 // extra interface functions
 
 func (t *TCPHandler) AddChanRoutine() {

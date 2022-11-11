@@ -39,6 +39,8 @@ Nick's ideas:
     - this handles the wrap-arounds for the buffer
     - send this UNA as absolute SEQ number
 
+- if N is specified as an option, does that mean calling read should never block? 
+
 
 ### TODOS: 
 

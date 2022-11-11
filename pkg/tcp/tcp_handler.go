@@ -24,6 +24,10 @@ type TCPPacket struct {
 	Data   []byte
 }
 
+const (
+	MAX_BUF_SIZE = 1 << 16
+)
+
 // The Send struct and Receive structs will be used to implement sliding window
 // TODO: need some pointer to indicate the next place where the application reads/writes to
 /*
@@ -31,13 +35,16 @@ type TCPPacket struct {
 ----------|----------|----------|----------
 		  UNA       NXT         UNA + WND (boundary of what is allowed in the current window)
 */
+// All of the indices here will be an absolute sequence number that we will mod by 2^16 to
+// get the index within the buffer
 type Send struct {
-	Buffer []byte
-	UNA    uint32 // oldest unacknowledged segment
-	NXT    uint32 // next byte to send
-	Window uint32 // TODO: does this just specify the window size?
-	ISS    uint32 // initial send sequence number
-	LBW    uint32
+	Buffer           []byte
+	UNA              uint32 // oldest unacknowledged segment
+	NXT              uint32 // next byte to send
+	WND              uint32 // window size as received from the receiver
+	ISS              uint32 // initial send sequence number
+	LBW              uint32
+	WriteBLockedCond sync.Cond
 }
 
 /*
@@ -48,11 +55,12 @@ type Send struct {
 */
 // smaller size --> two separate sizes (circular + sequence space) additional pointers --> buffer vs. sequence space
 type Receive struct {
-	Buffer []byte
-	NXT    uint32 // the next sequence number expected to receive
-	Window uint32
-	IRS    uint32 // initial receive sequence number
-	LBR    uint32 // keeps track of the next byte to be read
+	Buffer          []byte
+	NXT             uint32 // the next sequence number expected to receive
+	WND             uint32 // advertised window size
+	IRS             uint32 // initial receive sequence number
+	LBR             uint32 // keeps track of the next byte to be read
+	ReadBlockedCond sync.Cond
 }
 
 type TCB struct {
@@ -116,9 +124,8 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	newTCBEntry := &TCB{
 		State:       SYN_SENT,
 		ReceiveChan: make(chan SocketData), // some sort of channel when receiving another message on this layer
-		SND:         &Send{},
-		RCV:         &Receive{},
-	}
+		SND:         &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
+		RCV:         &Receive{Buffer: make([]byte, MAX_BUF_SIZE)}}
 
 	// add to the socket table
 	t.SocketTable[socketData] = newTCBEntry
@@ -241,49 +248,136 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 }
 
 // corresponds to RECEIVE in RFC
-func (t *TCPHandler) Read(data []byte, vc *VTCPConn) (int, error) {
+func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VTCPConn) (uint32, error) {
 	// check to see if the connection exists in the table, return error if it doesn't exist
 	var tcbEntry *TCB
 
 	// get tcb associated with the connection socket
 	if val, exists := t.SocketTable[vc.SocketTableKey]; !exists {
-		return -1, errors.New("Connection doesn't exist")
+		return 0, errors.New("Connection doesn't exist")
 	} else {
 		tcbEntry = val
 	}
 
-	// Per section 3.9, we can check the state of the connection and handle according to the state
-	switch tcbEntry.State {
+	amountReadSoFar := uint32(0)
+	for amountReadSoFar < amountToRead {
 
+		tcbEntry.TCBLock.Lock()
+		if tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
+			// TODO: is it okay if readAll isn't specified and we return 0 bytes read?
+			// 		 not sure what it means to return with at least 1 byte read
+			tcbEntry.TCBLock.Unlock()
+			if !readAll {
+				return amountReadSoFar, nil // there's nothing to read, so we just return in the case of a non-blocking read
+			} else {
+				// wait until we can get more data to read until amountToRead
+				for tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
+					tcbEntry.RCV.ReadBlockedCond.Wait()
+				}
+			}
+		}
+
+		var bytesToRead uint32
+
+		// bytes to read is the minimum of what is left to read and how much there is left to read in the TCB
+		leftToReadBuf := tcbEntry.RCV.NXT - tcbEntry.RCV.LBR
+		if amountToRead-amountReadSoFar < leftToReadBuf {
+			bytesToRead = amountToRead - amountReadSoFar
+		} else {
+			bytesToRead = leftToReadBuf
+		}
+
+		// LBR relative to the buffer indices
+		lbr_index := SequenceToBufferInd(tcbEntry.RCV.LBR)
+
+		if lbr_index+bytesToRead >= MAX_BUF_SIZE {
+			// There shouldn't be a case during which we would wrap around the buffer twice
+			// NXT - LBR should not be greater than 2^16
+			// how much to copy from lbr to the end of the buffer
+			copyToEndOfBufferLen := MAX_BUF_SIZE - lbr_index
+			// how much to copy to the beginning of the buffer
+			copyOverflowLen := bytesToRead - copyToEndOfBufferLen
+
+			// copies from lbr to the end of the buffer
+			firstCopyDataEndIndex := amountReadSoFar + copyToEndOfBufferLen // index from bytes read accumulator to the length of first copy
+			copy(data[amountReadSoFar:firstCopyDataEndIndex], tcbEntry.RCV.Buffer[lbr_index:])
+
+			// copies from the beginning of the buffer to how much was wrapped around
+			secondCopyDataEndIndex := firstCopyDataEndIndex + copyOverflowLen // index from the first copy to the second copy accounting for overflowed rest of buffer
+			copy(data[firstCopyDataEndIndex:secondCopyDataEndIndex], tcbEntry.RCV.Buffer[:copyOverflowLen])
+		} else {
+			// copy the however much we can in the buffer
+			copy(data[amountReadSoFar:amountReadSoFar+bytesToRead], tcbEntry.RCV.Buffer[lbr_index:lbr_index+bytesToRead])
+		}
+
+		// increment LBR and the number of bytes read so far
+		tcbEntry.RCV.LBR += bytesToRead
+		amountReadSoFar += bytesToRead
+
+		tcbEntry.TCBLock.Unlock()
 	}
 
-	return 0, nil
+	return amountReadSoFar, nil
 }
 
 // corresponds to SEND in RFC
-func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (int, error) {
+func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 	// check to see if the connection exists in the table, return error if it doesn't exist
 	var tcbEntry *TCB
 
 	if val, exists := t.SocketTable[vc.SocketTableKey]; !exists {
-		return -1, errors.New("Connection doesn't exist")
+		return 0, errors.New("Connection doesn't exist")
 	} else {
 		tcbEntry = val
 	}
 
-	// Per section 3.9, we can check the state of the connection and handle according to the state
-	switch tcbEntry.State {
-	case ESTABLISHED: 
-		amountToTransfer := len(data)
-		// can be greater than window size 
-		amountTransferred := 0 
+	amountToWrite := uint32(len(data))
+	// can be greater than window size
+	// payload size also can't be greater than MTU - sizeof(IP_header) - sizeof(TCP_hader) = 1360 bytes
+	amountWritten := uint32(0)
+	for amountWritten < amountToWrite {
+		tcbEntry.TCBLock.Lock()
 
-		for amountTransferred 
-		numWindows := len(data) / int(tcbEntry.SND.Window)
+		// there is no space to write anything, then we should block until we can
+		for tcbEntry.SND.LBW == tcbEntry.SND.UNA {
+			tcbEntry.SND.WriteBLockedCond.Wait()
+		}
 
+		var bytesToWrite uint32
+		// bytes to write is the minimum between the remaining buffer size and the rest we have left to write
+		remainingBufSize := MAX_BUF_SIZE - (tcbEntry.SND.LBW - tcbEntry.SND.UNA)
+		if remainingBufSize < amountToWrite-amountWritten {
+			bytesToWrite = remainingBufSize
+		} else {
+			bytesToWrite = amountToWrite - amountWritten
+		}
 
+		// LBW relative to buffer indices
+		lbw_index := SequenceToBufferInd(tcbEntry.SND.LBW)
+
+		if tcbEntry.SND.LBW+bytesToWrite > MAX_BUF_SIZE {
+			// need to copy twice for overflow, same logic as in read.
+			copyToEndOfBufferLen := MAX_BUF_SIZE - lbw_index       // length until end of buffer
+			copyOverflowLen := bytesToWrite - copyToEndOfBufferLen // remaining length after ov
+
+			firstCopyDataEndIndex := amountWritten + copyToEndOfBufferLen     // index into user's data stream after first overflow copy
+			secondCopyDataEndIndex := firstCopyDataEndIndex + copyOverflowLen // index into user's data stream after second copy for the remainder
+
+			// copy send buffer to end into data's starting offset to first copy index
+			copy(tcbEntry.SND.Buffer[lbw_index:], data[amountWritten:firstCopyDataEndIndex])
+			// copy from the start of the send buffer to the length of the remainder into the rest of the user's data buffer
+			copy(tcbEntry.SND.Buffer[:copyOverflowLen], data[firstCopyDataEndIndex:secondCopyDataEndIndex])
+		} else {
+			copy(tcbEntry.SND.Buffer[lbw_index:], data[amountWritten:amountWritten+bytesToWrite])
+		}
+
+		amountWritten += bytesToWrite
+		tcbEntry.SND.LBW += bytesToWrite
+
+		tcbEntry.TCBLock.Unlock()
 	}
-	return 0, nil
+
+	return amountToWrite, nil
 }
 
 func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
@@ -351,8 +445,8 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				// create a new tcb entry to represent the spawned socket connection
 				newTCBEntry := &TCB{ConnectionType: 0,
 					ReceiveChan: make(chan SocketData),
-					SND:         &Send{Buffer: make([]byte, 0)},
-					RCV:         &Receive{Buffer: make([]byte, 0)}}
+					SND:         &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
+					RCV:         &Receive{Buffer: make([]byte, MAX_BUF_SIZE)}}
 
 				newTCBEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // acknowledge the SYN's seq number (X+1)
 				newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber()     // start our stream at seq number (X)
@@ -422,7 +516,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 
 				t.IPLayerChannel <- buf
 
-				tcbEntry.SND.Window = uint32(tcpHeader.WindowSize())
+				tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
 				return
 			}
 			// TODO: if the length of the payload is greater than 0, we need to do some processing?
@@ -440,7 +534,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				if tcbEntry.SND.UNA < tcpHeader.AckNumber() && tcpHeader.AckNumber() <= tcbEntry.SND.NXT {
 					tcbEntry.State = ESTABLISHED // move to transition to an established connect
 
-					tcbEntry.SND.Window = uint32(tcpHeader.WindowSize())
+					tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
 
 					// send to accept
 					// TODO: temporary solution is just adding an additional field to store the listener reference
@@ -454,7 +548,8 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				return
 			}
 		case ESTABLISHED:
-			log.Printf("received a segment when state is in SYN")
+			log.Printf("received a segment when state is in ESTABLISHED")
+
 		case FIN_WAIT_1:
 		case FIN_WAIT_2:
 		case CLOSING:

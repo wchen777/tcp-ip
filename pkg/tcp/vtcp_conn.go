@@ -24,8 +24,8 @@ func (vc *VTCPConn) GetSocketTableKey() SocketData {
   * is nil on success, io.EOF if other side of connection was done
   sending, or other error describing other failure cases.
 */
-func (vc *VTCPConn) VRead(data []byte) (int, error) {
-	return vc.TCPHandler.Read(data, vc)
+func (vc *VTCPConn) VRead(data []byte, amountToRead uint32, readAll bool) (uint32, error) {
+	return vc.TCPHandler.Read(data, amountToRead, readAll, vc)
 }
 
 /*
@@ -36,7 +36,7 @@ func (vc *VTCPConn) VRead(data []byte) (int, error) {
  * Returns number of bytes written to the connection, error if socket
  * is closed or on other failures.
  */
-func (vc *VTCPConn) VWrite(data []byte) (int, error) {
+func (vc *VTCPConn) VWrite(data []byte) (uint32, error) {
 	return vc.TCPHandler.Write(data, vc)
 }
 
