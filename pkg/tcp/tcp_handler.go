@@ -320,6 +320,26 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 	return amountReadSoFar, nil
 }
 
+// func (t *TCPHandler) HandleTimeouts() {
+
+// }
+
+// always running go routine that is sending data and checking to see if the buffer is empty
+// waiting on a condition variable that will be notified in write
+
+// Check to see if distance between UNA and NXT < the window size, and then send up to
+// (UNA + WINDOW_SIZE) - NXT bytes of data and increment the NXT pointer, unless NXT
+// is limited by LBW
+
+// If NXT == LBW, then wait until there is data that has been written
+
+// TODO: add each segment to a queue for retransmission
+
+// Sequence number should increment depending on the segment size
+func (t *TCPHandler) Send() {
+
+}
+
 // corresponds to SEND in RFC
 func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 	// check to see if the connection exists in the table, return error if it doesn't exist
@@ -331,6 +351,8 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 		tcbEntry = val
 	}
 
+	// TODO: add checking for what state the entry is in
+
 	amountToWrite := uint32(len(data))
 	// can be greater than window size
 	// payload size also can't be greater than MTU - sizeof(IP_header) - sizeof(TCP_hader) = 1360 bytes
@@ -340,6 +362,8 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 
 		// there is no space to write anything, then we should block until we can
 		for tcbEntry.SND.LBW == tcbEntry.SND.UNA {
+			// TODO: when would it be sent though?
+			//      should the sending happen always in an async go routine?
 			tcbEntry.SND.WriteBLockedCond.Wait()
 		}
 
