@@ -195,6 +195,36 @@ func (n *Node) REPL() {
 			}
 			n.ListSocketCommand(w)
 			w.Flush()
+		case "s":
+			if len(commands) != 3 {
+				fmt.Print("Invalid number of arguments for s")
+				break
+			}
+			n.SendTCPCommand(line)
+		case "r":
+			if len(commands) != 4 {
+				fmt.Print("Invalid number of arguments for s")
+				break
+			}
+			socketID, err := strconv.Atoi(commands[1])
+			if err != nil {
+				fmt.Printf("Invalid socket id number: %s\n", commands[1])
+				break
+			}
+			numBytes, err := strconv.Atoi(commands[2])
+			if err != nil {
+				fmt.Printf("Invalid number of bytes: %s\n", commands[2])
+				break
+			}
+			if commands[3] == "y" {
+				n.ReadTCPCommand(socketID, uint32(numBytes), true)
+			} else if commands[3] == "n" {
+				n.ReadTCPCommand(socketID, uint32(numBytes), false)
+			} else {
+				fmt.Printf("Invalid option for read: %s\n", commands[3])
+				break
+			}
+
 		default:
 			n.PrintHelp(w)
 			w.Flush()

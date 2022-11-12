@@ -25,8 +25,8 @@ type TCPPacket struct {
 }
 
 const (
-	MAX_BUF_SIZE = 1 << 16 // buffer size
-	MSS_DATA     = 1360    // maximum segment size of the data in the packet, 1400 - TCP_HEADER_SIZE - IP_HEADER_SIZE
+	MAX_BUF_SIZE = (1 << 16) - 1 // buffer size
+	MSS_DATA     = 1360          // maximum segment size of the data in the packet, 1400 - TCP_HEADER_SIZE - IP_HEADER_SIZE
 )
 
 // The Send struct and Receive structs will be used to implement sliding window
@@ -40,12 +40,12 @@ const (
 // get the index within the buffer
 type Send struct {
 	Buffer           []byte
-	UNA              uint32 // oldest unacknowledged segment
-	NXT              uint32 // next byte to send
-	WND              uint32 // window size as received from the receiver
-	ISS              uint32 // initial send sequence number
-	LBW              uint32
-	WriteBLockedCond sync.Cond // for whether or not there is space left in the buffer to be written to from the application
+	UNA              uint32    // oldest unacknowledged segment
+	NXT              uint32    // next byte to send
+	WND              uint32    // window size as received from the receiver
+	ISS              uint32    // initial send sequence number
+	LBW              uint32    // last byte TO BE written
+	WriteBlockedCond sync.Cond // for whether or not there is space left in the buffer to be written to from the application
 	SendLock         sync.Mutex
 }
 
@@ -61,7 +61,7 @@ type Receive struct {
 	NXT             uint32    // the next sequence number expected to receive
 	WND             uint32    // advertised window size
 	IRS             uint32    // initial receive sequence number
-	LBR             uint32    // keeps track of the next byte to be read
+	LBR             uint32    // keeps track of the next byte TO BE read
 	ReadBlockedCond sync.Cond // for whether or not there is stuff to read in
 	ReceiveLock     sync.Mutex
 }
@@ -130,6 +130,8 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 		SND:         &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
 		RCV:         &Receive{Buffer: make([]byte, MAX_BUF_SIZE)}}
 
+	newTCBEntry.SND.WriteBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
+
 	// add to the socket table
 	t.SocketTable[socketData] = newTCBEntry
 
@@ -137,6 +139,7 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	newTCBEntry.State = SYN_SENT
 	newTCBEntry.SND.ISS = NewISS()
 	newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1
+	newTCBEntry.SND.LBW = newTCBEntry.SND.NXT
 	newTCBEntry.SND.UNA = newTCBEntry.SND.ISS
 
 	// create a SYN packet with a random sequence number
@@ -328,8 +331,69 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 // }
 
 // always running go routine that is receiving data from the channel
-func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *SocketData, tcbEntry *TCB) {
 
+// Get the sequence number to figure out where to copy the data into the buffer
+// copy data into buffer starting from NXT (presumably), while also taking into account the wrapping around
+
+// If there is no more space remaining in the buffer, then block until data has been
+// read by the application layer (i.e. when NXT - LBR == MAX_BUF_SIZE)
+
+// Send ACKs back to confirm what we expect next
+// This routine only handles ONE packet at a time
+
+// TODO: need to include a early arrival queue
+func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *SocketData, tcbEntry *TCB) {
+	// two cases:
+	// error case is when it's greater than NXT and
+	seqNumReceived := tcpHeader.SequenceNumber()
+
+	// we've already ACK'd this packet, drop
+	if seqNumReceived < tcbEntry.RCV.NXT {
+		log.Print("Dropping packet because we've already received it")
+		return
+	}
+	// we've received a SEQ that is out of the range of the window and not meant for us
+	if seqNumReceived >= tcbEntry.RCV.NXT+tcbEntry.RCV.WND {
+		log.Printf("sequence number received: %d\n", seqNumReceived)
+		log.Printf("sequence number window: %d\n", tcbEntry.RCV.WND)
+		log.Printf("Sequence number is out of range of the window")
+		return
+	}
+
+	if seqNumReceived == tcbEntry.RCV.NXT {
+		// copy the data into the buffer
+		amountToCopy := uint32(len(payload))
+		for (seqNumReceived+amountToCopy)-tcbEntry.RCV.LBR == MAX_BUF_SIZE {
+			// wait here until there is space available to copy the entire payload
+			// into the buffer
+
+			// TODO: is it better to wait for every iteration of the copying?
+		}
+
+		amountCopied := uint32(0)
+
+		for amountCopied < amountToCopy {
+			nxt_index := SequenceToBufferInd(tcbEntry.RCV.NXT) // next pointer relative to buffer
+
+			remainingBufSize := MAX_BUF_SIZE - (tcbEntry.RCV.NXT - tcbEntry.RCV.LBR + 1) // maximum possible read length ()
+			toCopy := Min(remainingBufSize, amountToCopy-amountCopied)
+
+			if nxt_index+toCopy >= MAX_BUF_SIZE {
+				firstCopy := MAX_BUF_SIZE - nxt_index
+				copy(tcbEntry.RCV.Buffer[nxt_index:], payload[amountCopied:amountCopied+firstCopy])
+				secondCopy := toCopy - firstCopy
+				copy(tcbEntry.RCV.Buffer[:secondCopy], payload[amountCopied+firstCopy:amountCopied+firstCopy+secondCopy])
+			} else {
+				copy(tcbEntry.RCV.Buffer[nxt_index:nxt_index+toCopy], payload[amountCopied:amountCopied+toCopy])
+			}
+
+			amountCopied += toCopy
+			tcbEntry.RCV.NXT += toCopy
+		}
+	}
+	// either sequence number is at NXT
+
+	// or sequence number is greater, in which case -> early arrivals queue
 }
 
 // always running go routine that is sending data and checking to see if the buffer is empty
@@ -350,11 +414,15 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 
 	// loop condition -> while NXT - UNA < WIN (we keep sending until the window size is reached)
 	for {
+		log.Print("Each iteration of send 1")
 		tcbEntry.TCBLock.Lock()
+		log.Printf("NXT Sending: %d\n", tcbEntry.SND.NXT)
+		log.Printf("UNA Sending: %d\n", tcbEntry.SND.UNA)
+		log.Printf("WND Sending: %d\n", tcbEntry.SND.UNA)
 		for tcbEntry.SND.NXT-tcbEntry.SND.UNA < tcbEntry.SND.WND {
-
+			log.Print("Each iteration of send 2")
 			for tcbEntry.SND.NXT == tcbEntry.SND.LBW { // wait for more data to be written
-
+				log.Print("we are stuck here")
 			}
 
 			// how much we can send, which is constrainted by the window size starting from UNA
@@ -377,7 +445,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 				buf := &bytes.Buffer{}
 				binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
 				binary.Write(buf, binary.BigEndian, socketData.DestAddr)
-				tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck)
+				tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
 				bufToSend := buf.Bytes()
 				bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 				bufToSend = append(bufToSend, payload...)
@@ -391,7 +459,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 		}
 		// so if they are equal this means that we need to sleep until data has been ACKed
 		for tcbEntry.SND.NXT-tcbEntry.SND.UNA == tcbEntry.SND.WND {
-			tcbEntry.SND.WriteBLockedCond.Wait()
+			tcbEntry.SND.WriteBlockedCond.Wait()
 		}
 		tcbEntry.TCBLock.Unlock()
 	}
@@ -418,12 +486,14 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 	// payload size also can't be greater than MTU - sizeof(IP_header) - sizeof(TCP_hader) = 1360 bytes
 	amountWritten := uint32(0)
 	for amountWritten < amountToWrite {
+		log.Printf("amount written: %d\n", amountWritten)
 		tcbEntry.TCBLock.Lock()
 
 		// there is no space to write anything, then we should block until we can
-		for tcbEntry.SND.LBW-tcbEntry.SND.UNA+1 == MAX_BUF_SIZE {
+		for tcbEntry.SND.LBW-tcbEntry.SND.UNA == MAX_BUF_SIZE {
 			// This should unblock from receiving ACKs
-			tcbEntry.SND.WriteBLockedCond.Wait()
+			log.Print("Waiting for space to be available in the buffer")
+			tcbEntry.SND.WriteBlockedCond.Wait()
 		}
 
 		remainingBufSize := MAX_BUF_SIZE - (tcbEntry.SND.LBW - tcbEntry.SND.UNA)
@@ -433,7 +503,7 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 		// LBW relative to buffer indices
 		lbw_index := SequenceToBufferInd(tcbEntry.SND.LBW)
 
-		if tcbEntry.SND.LBW+bytesToWrite > MAX_BUF_SIZE {
+		if lbw_index+bytesToWrite > MAX_BUF_SIZE { // wrap-around case
 			// need to copy twice for overflow, same logic as in read.
 			copyToEndOfBufferLen := MAX_BUF_SIZE - lbw_index       // length until end of buffer
 			copyOverflowLen := bytesToWrite - copyToEndOfBufferLen // remaining length after ov
@@ -455,6 +525,7 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 		// TODO: signal to the sender that there is data
 
 		tcbEntry.TCBLock.Unlock()
+
 	}
 
 	return amountToWrite, nil
@@ -478,9 +549,9 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	// extract the header from the data portion of the IP packet
 	log.Print("Received TCP packet")
 	tcpData := packet.Data
-	tcpHeaderAndData := tcpData[0:packet.Header.TotalLen]
+	tcpHeaderAndData := tcpData[0:]
 	tcpHeader := header.TCP(tcpHeaderAndData)
-	// tcpPayload := tcpHeaderAndData[tcpHdr.DataOffset:]
+	tcpPayload := tcpHeaderAndData[tcpHeader.DataOffset():]
 
 	// need to figure out which socket that this data corresponds to
 	// follow the state machine for when we receive a packet
@@ -529,12 +600,16 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 					RCV:         &Receive{Buffer: make([]byte, MAX_BUF_SIZE)}}
 
 				newTCBEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // acknowledge the SYN's seq number (X+1)
-				newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber()     // start our stream at seq number (X)
-				newTCBEntry.SND.ISS = NewISS()                       // start with random ISS for our SYN (= Y)
-				newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1        // next to send is (Y+1)
-				newTCBEntry.SND.UNA = newTCBEntry.SND.ISS            // waiting for acknowledgement of (Y)
-				newTCBEntry.State = SYN_RECEIVED                     // move to SYN_RECEIVED
+				newTCBEntry.RCV.LBR = newTCBEntry.RCV.NXT
+				newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber() // start our stream at seq number (X)
+				newTCBEntry.RCV.WND = MAX_BUF_SIZE
+				log.Printf("window size before sending data back: %d\n", newTCBEntry.RCV.WND)
+				newTCBEntry.SND.ISS = NewISS()                // start with random ISS for our SYN (= Y)
+				newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1 // next to send is (Y+1)
+				newTCBEntry.SND.UNA = newTCBEntry.SND.ISS     // waiting for acknowledgement of (Y)
+				newTCBEntry.State = SYN_RECEIVED              // move to SYN_RECEIVED
 				newTCBEntry.ListenKey = key
+				newTCBEntry.SND.WriteBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 				log.Printf("adding this socket data for new entry: %v\n", socketData)
 				t.SocketTable[socketData] = newTCBEntry
 
@@ -542,7 +617,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				buf := &bytes.Buffer{}
 				binary.Write(buf, binary.BigEndian, localAddr)
 				binary.Write(buf, binary.BigEndian, destAddr)
-				tcpHeader := CreateTCPHeader(socketData.LocalPort, destPort, newTCBEntry.SND.ISS, newTCBEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck)
+				tcpHeader := CreateTCPHeader(socketData.LocalPort, destPort, newTCBEntry.SND.ISS, newTCBEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck, newTCBEntry.RCV.WND)
 				bufToSend := buf.Bytes()
 				log.Printf("bytes to send: %v\n", bufToSend)
 				bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, destAddr)...)
@@ -563,18 +638,22 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			}
 			if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // if syn (still can reach here if ACK is 0)
 				tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // received a new seq number (Y) from SYN-ACK (orSYN) response, set next to Y+1
-				tcbEntry.RCV.IRS = tcpHeader.SequenceNumber()     // start of client's stream is (Y)
-				tcbEntry.SND.UNA = tcpHeader.AckNumber()          // the X we sent in SYN is ACK'd, set unACK'd to X++1
+				// TODO: fix recv window
+				tcbEntry.RCV.WND = uint32(tcpHeader.WindowSize())
+				tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
+				log.Printf("New window size: %d\n", tcbEntry.SND.WND)
+				tcbEntry.RCV.IRS = tcpHeader.SequenceNumber() // start of client's stream is (Y)
+				tcbEntry.SND.UNA = tcpHeader.AckNumber()      // the X we sent in SYN is ACK'd, set unACK'd to X++1
 
 				if tcbEntry.SND.UNA > tcbEntry.SND.ISS {
+					log.Print("reached point of being established")
 					tcbEntry.State = ESTABLISHED
 					// call the asynchronous send routine passing in the tcb entry that should be sending data
-					go t.Send(&key, tcbEntry)
 
 					tcbEntry.SND.ISS = NewISS()
 
 					// create the tcp header with the ____
-					newTCPHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck)
+					newTCPHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, MAX_BUF_SIZE)
 					buf := &bytes.Buffer{}
 					binary.Write(buf, binary.BigEndian, localAddr)
 					binary.Write(buf, binary.BigEndian, destAddr)
@@ -584,6 +663,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 					tcbEntry.ReceiveChan <- key // signal the socket that is waiting for accepts to proceed with returning a new socket
 
 					t.IPLayerChannel <- bufToSend // send this to the ip layer channel so it can be sent as data
+					go t.Send(&key, tcbEntry)
 					return
 				}
 
@@ -594,12 +674,11 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				// need to send SYN_ACK in this case
 				tcbEntry.SND.ISS = NewISS() // start with a new (Y)
 
-				msgtcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.ISS, tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck)
+				msgtcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.ISS, tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck, tcbEntry.RCV.WND)
 				buf := MarshallTCPHeader(&msgtcpHeader, destAddr)
 
 				t.IPLayerChannel <- buf
 
-				tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
 				return
 			}
 			// TODO: if the length of the payload is greater than 0, we need to do some processing?
@@ -618,9 +697,10 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 					tcbEntry.State = ESTABLISHED // move to transition to an established connect
 
 					// call asynchronous send routine and pass in tcb entry
-					go t.Send(&key, tcbEntry)
-
 					tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
+					log.Printf("Window size in syn received: %d\n", tcbEntry.SND.WND)
+
+					go t.Send(&key, tcbEntry)
 
 					// send to accept
 					// TODO: temporary solution is just adding an additional field to store the listener reference
@@ -636,6 +716,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		case ESTABLISHED:
 			log.Printf("received a segment when state is in ESTABLISHED")
 			// call a function or have a function that's always running?
+			t.Receive(tcpHeader, tcpPayload, &key, tcbEntry)
 		case FIN_WAIT_1:
 		case FIN_WAIT_2:
 		case CLOSING:

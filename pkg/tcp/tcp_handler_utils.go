@@ -8,7 +8,8 @@ import (
 
 // tcp_handler_utils houses reusable functions for the tcp handler
 
-func CreateTCPHeader(srcPort uint16, dstPort uint16, seqNum uint32, ackNum uint32, flags uint8) header.TCPFields {
+func CreateTCPHeader(srcPort uint16, dstPort uint16, seqNum uint32, ackNum uint32, flags uint8, windowSize uint32) header.TCPFields {
+	// log.Printf("create TCP header window size: %d\n", windowSize)
 	return header.TCPFields{
 		SrcPort:       srcPort,
 		DstPort:       dstPort,
@@ -16,7 +17,7 @@ func CreateTCPHeader(srcPort uint16, dstPort uint16, seqNum uint32, ackNum uint3
 		AckNum:        ackNum,
 		DataOffset:    20,
 		Flags:         flags,
-		WindowSize:    65535,
+		WindowSize:    uint16(windowSize),
 		Checksum:      0,
 		UrgentPointer: 0,
 	}

@@ -48,7 +48,7 @@ Nick's ideas:
 - synchronization for socket table? + access to entries?
 
 
-- min function?
+- send / rec lock
 - refactor sliding window, send, etc
 
 
