@@ -37,6 +37,14 @@ func SequenceToBufferInd(val uint32) uint32 {
 	return val % (1 << 16)
 }
 
+func Min(val1 uint32, val2 uint32) uint32 {
+	if val1 < val2 {
+		return val1
+	} else {
+		return val2
+	}
+}
+
 // extra interface functions
 
 func (t *TCPHandler) AddChanRoutine() {
