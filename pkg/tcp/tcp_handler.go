@@ -357,7 +357,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 
 			}
 
-			// how much we can send,
+			// how much we can send, which is constrainted by the window size starting from UNA
 			totalWinIndex := tcbEntry.SND.UNA + tcbEntry.SND.WND
 			amountToSend := Min(totalWinIndex-tcbEntry.SND.NXT, tcbEntry.SND.LBW-tcbEntry.SND.NXT)
 
@@ -635,7 +635,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			}
 		case ESTABLISHED:
 			log.Printf("received a segment when state is in ESTABLISHED")
-
+			// call a function or have a function that's always running?
 		case FIN_WAIT_1:
 		case FIN_WAIT_2:
 		case CLOSING:
