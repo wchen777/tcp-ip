@@ -47,6 +47,7 @@ type Send struct {
 	LBW              uint32    // last byte TO BE written
 	WriteBlockedCond sync.Cond // for whether or not there is space left in the buffer to be written to from the application
 	SendLock         sync.Mutex
+	SendBlockedCond  sync.Cond
 }
 
 /*
@@ -131,6 +132,8 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 		RCV:         &Receive{Buffer: make([]byte, MAX_BUF_SIZE)}}
 
 	newTCBEntry.SND.WriteBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
+	newTCBEntry.SND.SendBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
+	newTCBEntry.RCV.ReadBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 
 	// add to the socket table
 	t.SocketTable[socketData] = newTCBEntry
@@ -272,8 +275,8 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 		if tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
 			// TODO: is it okay if readAll isn't specified and we return 0 bytes read?
 			// 		 not sure what it means to return with at least 1 byte read
-			tcbEntry.TCBLock.Unlock()
 			if !readAll {
+				tcbEntry.TCBLock.Unlock()
 				return amountReadSoFar, nil // there's nothing to read, so we just return in the case of a non-blocking read
 			} else {
 				// wait until we can get more data to read until amountToRead
@@ -343,6 +346,8 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 
 // TODO: need to include a early arrival queue
 func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *SocketData, tcbEntry *TCB) {
+
+	tcbEntry.TCBLock.Lock()
 	// two cases:
 	// error case is when it's greater than NXT and
 	seqNumReceived := tcpHeader.SequenceNumber()
@@ -360,6 +365,7 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 		return
 	}
 
+	// either sequence number is at NXT
 	if seqNumReceived == tcbEntry.RCV.NXT {
 		// copy the data into the buffer
 		amountToCopy := uint32(len(payload))
@@ -389,9 +395,12 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 
 			amountCopied += toCopy
 			tcbEntry.RCV.NXT += toCopy
+
 		}
 	}
-	// either sequence number is at NXT
+
+	tcbEntry.RCV.ReadBlockedCond.Signal()
+	tcbEntry.TCBLock.Unlock()
 
 	// or sequence number is greater, in which case -> early arrivals queue
 }
@@ -418,11 +427,11 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 		tcbEntry.TCBLock.Lock()
 		log.Printf("NXT Sending: %d\n", tcbEntry.SND.NXT)
 		log.Printf("UNA Sending: %d\n", tcbEntry.SND.UNA)
-		log.Printf("WND Sending: %d\n", tcbEntry.SND.UNA)
+		log.Printf("WND Sending: %d\n", tcbEntry.SND.WND)
 		for tcbEntry.SND.NXT-tcbEntry.SND.UNA < tcbEntry.SND.WND {
 			log.Print("Each iteration of send 2")
 			for tcbEntry.SND.NXT == tcbEntry.SND.LBW { // wait for more data to be written
-				log.Print("we are stuck here")
+				tcbEntry.SND.SendBlockedCond.Wait()
 			}
 
 			// how much we can send, which is constrainted by the window size starting from UNA
@@ -523,7 +532,7 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 		tcbEntry.SND.LBW += bytesToWrite
 
 		// TODO: signal to the sender that there is data
-
+		tcbEntry.SND.SendBlockedCond.Signal()
 		tcbEntry.TCBLock.Unlock()
 
 	}
@@ -607,9 +616,12 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 				newTCBEntry.SND.ISS = NewISS()                // start with random ISS for our SYN (= Y)
 				newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1 // next to send is (Y+1)
 				newTCBEntry.SND.UNA = newTCBEntry.SND.ISS     // waiting for acknowledgement of (Y)
-				newTCBEntry.State = SYN_RECEIVED              // move to SYN_RECEIVED
+				newTCBEntry.SND.LBW = newTCBEntry.SND.NXT
+				newTCBEntry.State = SYN_RECEIVED // move to SYN_RECEIVED
 				newTCBEntry.ListenKey = key
 				newTCBEntry.SND.WriteBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
+				newTCBEntry.SND.SendBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
+				newTCBEntry.RCV.ReadBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 				log.Printf("adding this socket data for new entry: %v\n", socketData)
 				t.SocketTable[socketData] = newTCBEntry
 

@@ -113,9 +113,9 @@ func (n *Node) ReadTCPCommand(socketID int, numBytes uint32, readAll bool) error
 		connRead = val
 	}
 
-	data := make([]byte, 0)
+	data := make([]byte, numBytes)
 	numBytesRead, err := connRead.VRead(data, numBytes, readAll)
 	log.Printf("Number of bytes read: %d\n", numBytesRead)
-	log.Printf("Data read: %v", data)
+	log.Printf("Data read: %s", string(data))
 	return err
 }

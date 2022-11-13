@@ -49,6 +49,7 @@ Nick's ideas:
 
 
 - send / rec lock
+- cond's depending on the send/rec lock ^^ rather than TCB lock
 - refactor sliding window, send, etc
 
 
