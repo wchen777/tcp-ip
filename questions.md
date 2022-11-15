@@ -54,4 +54,5 @@ Nick's ideas:
 
 - send to an invalid socket index -> needs error message
 
+- connect with an invalid port number --> who should handle that error case? 
 
