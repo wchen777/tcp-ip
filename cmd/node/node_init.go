@@ -40,7 +40,7 @@ func (n *Node) InitSocketIndexTable() {
 /*
 	protocol handler for TCP
 */
-func NewTCPHandler(IPLayerChan chan []byte, localIFs map[uint32]*ip.LinkInterface) ip.Handler {
+func NewTCPHandler(IPLayerChan chan []byte, localIFs map[uint32]*ip.LinkInterface, errorChan chan error) ip.Handler {
 
 	var addr uint32
 	for key := range localIFs { // get first addr from our interfaces table TODO: temp fix
@@ -48,7 +48,7 @@ func NewTCPHandler(IPLayerChan chan []byte, localIFs map[uint32]*ip.LinkInterfac
 		break
 	}
 
-	return &tcp.TCPHandler{IPLayerChannel: IPLayerChan, CurrentPort: 1025, LocalAddr: addr}
+	return &tcp.TCPHandler{IPLayerChannel: IPLayerChan, CurrentPort: 1025, LocalAddr: addr, IPErrorChannel: errorChan}
 }
 
 /*
@@ -172,8 +172,10 @@ func (n *Node) SetupHandlers() {
 	tracerouteHandler := NewTracerouteHandler(n.Host.NextHopChannel, n.Host.EchoChannel)
 
 	// initialize TCP header
-	n.InitSocketIndexTable() // for tcp sockets
-	tcpHandler := NewTCPHandler(n.Host.TCPMessageChannel, n.Host.LocalIFs)
+	n.InitSocketIndexTable()         // for tcp sockets
+	errorChanTCP := make(chan error) // for tcp layer - ip layer error communication
+	tcpHandler := NewTCPHandler(n.Host.TCPMessageChannel, n.Host.LocalIFs, errorChanTCP)
+	n.Host.TCPErrorChannel = errorChanTCP // initialize it in the host
 
 	// register the handlers as functions for the host
 	n.Host.RegisterHandler(RIP_PROTOCOL, ripHandler)         // 200

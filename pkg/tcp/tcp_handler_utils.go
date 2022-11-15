@@ -35,7 +35,7 @@ func NewISS() uint32 {
 }
 
 func SequenceToBufferInd(val uint32) uint32 {
-	return val % (1 << 16)
+	return val % MAX_BUF_SIZE
 }
 
 func Min(val1 uint32, val2 uint32) uint32 {

@@ -75,7 +75,8 @@ func (n *Node) REPL() {
 	fmt.Print("> ")
 	for scanner.Scan() {
 		line := scanner.Text()
-		if line[0] == '\n' {
+		if len(line) == 0 {
+			fmt.Print("> ")
 			continue
 		}
 		commands := strings.Split(line, " ")

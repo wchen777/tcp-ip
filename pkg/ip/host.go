@@ -28,8 +28,8 @@ type Host struct {
 	HandlerRegistry map[int]Handler // registered handlers
 	HostConnection  *net.UDPConn    // listener and sending on host's udp port
 
-	CancelChannel chan bool // bool channel for cancelling upon q command
-
+	CancelChannel   chan bool // bool channel for cancelling upon q command
+	TCPErrorChannel chan error
 }
 
 const (
@@ -284,14 +284,22 @@ func (h *Host) ReadFromHandler() {
 			log.Printf("source address received: %d\n", srcAddr)
 			destAddr := binary.BigEndian.Uint32(data[ADDR_SIZE : 2*ADDR_SIZE])
 			log.Printf("destination address recevied: %d\n", destAddr)
-			entry := h.RoutingTable.Table[destAddr]
+
+			var entry *RoutingTableEntry
+
+			if val, exists := h.RoutingTable.Table[destAddr]; !exists {
+				h.TCPErrorChannel <- errors.New("No route to host")
+				return
+			} else {
+				entry = val
+			}
 
 			if addrOfInterface, exists := h.RemoteDestination[entry.NextHop]; exists {
 				// addrOfInterface is the new source address
 				packet := h.CreateIPPacket(srcAddr, destAddr, data[2*ADDR_SIZE:], 6, 16)
 				checkSum, err := computeChecksum(packet)
 				if err != nil {
-					log.Print(err)
+					h.TCPErrorChannel <- err
 					return
 				}
 				packet.Header.Checksum = int(checkSum)

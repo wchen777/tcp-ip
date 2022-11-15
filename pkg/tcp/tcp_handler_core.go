@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"github.com/google/netstack/tcpip/header"
 	"log"
 	"net"
 	"sync"
+	"time"
+
+	"github.com/google/netstack/tcpip/header"
 )
 
 // The TCP Handler Core file implements the functions for the "network stack".
@@ -49,6 +51,7 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	newTCBEntry.SND.WriteBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 	newTCBEntry.SND.SendBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 	newTCBEntry.RCV.ReadBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
+	newTCBEntry.SND.ZeroBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 
 	// add to the socket table
 	t.SocketTable[socketData] = newTCBEntry
@@ -59,6 +62,7 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1
 	newTCBEntry.SND.LBW = newTCBEntry.SND.NXT
 	newTCBEntry.SND.UNA = newTCBEntry.SND.ISS
+	newTCBEntry.RCV.WND = MAX_BUF_SIZE
 
 	// create a SYN packet with a random sequence number
 	tcpHeader := header.TCPFields{
@@ -95,6 +99,8 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 
 	for {
 		select {
+		case err := <-t.IPErrorChannel:
+			return nil, err
 		case _ = <-newTCBEntry.ReceiveChan:
 			return newConn, nil
 		}
@@ -131,7 +137,7 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 
 	// if the entry doesn't yet exist
 	listenerSocket := &VTCPListener{SocketTableKey: socketTableKey, TCPHandler: t} // the listener socket that is returned to the user
-	newTCBEntry := &TCB{ // start a TCB entry on the listen state to represent the listen socket
+	newTCBEntry := &TCB{                                                           // start a TCB entry on the listen state to represent the listen socket
 		State:       LISTEN,
 		ReceiveChan: make(chan SocketData),
 	}
@@ -236,6 +242,7 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 
 		// increment LBR and the number of bytes read so far
 		tcbEntry.RCV.LBR += bytesToRead
+		tcbEntry.RCV.WND += bytesToRead
 		amountReadSoFar += bytesToRead
 
 		tcbEntry.TCBLock.Unlock()
@@ -261,15 +268,21 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 
 // TODO: need to include a early arrival queue
 func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *SocketData, tcbEntry *TCB) {
+	if (tcpHeader.Flags() & header.TCPFlagAck) == 0 {
+		return
+	}
 
 	tcbEntry.TCBLock.Lock()
+	defer tcbEntry.TCBLock.Unlock()
+
 	// two cases:
 	// error case is when it's greater than NXT and
 	seqNumReceived := tcpHeader.SequenceNumber()
 
 	// we've already ACK'd this packet, drop
-	if seqNumReceived < tcbEntry.RCV.NXT {
+	if seqNumReceived < tcbEntry.RCV.NXT && seqNumReceived < tcbEntry.RCV.LBR {
 		log.Print("Dropping packet because we've already received it")
+		// TODO: send back ACK just in case for duplicates?
 		return
 	}
 	// we've received a SEQ that is out of the range of the window and not meant for us
@@ -277,47 +290,94 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 		log.Printf("sequence number received: %d\n", seqNumReceived)
 		log.Printf("sequence number window: %d\n", tcbEntry.RCV.WND)
 		log.Printf("Sequence number is out of range of the window")
+		// TODO: send ACK for zero-probing if NXT is equal to seq num?
+		if tcbEntry.RCV.WND == 0 {
+			// send ACK back
+			buf := &bytes.Buffer{}
+			binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
+			binary.Write(buf, binary.BigEndian, socketData.DestAddr)
+
+			// the ack number should be updated because tcbEntry.RCV.NXT is updated
+			log.Printf("RECEIVE NXT: %d\n", tcbEntry.RCV.NXT)
+			tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
+			bufToSend := buf.Bytes()
+			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
+			log.Print("Sending ack!")
+			t.IPLayerChannel <- bufToSend
+		}
 		return
 	}
 
+	// FOR THE RECEIVER and incrementing the NXT pointer
 	// either sequence number is at NXT
 	if seqNumReceived == tcbEntry.RCV.NXT {
 		// copy the data into the buffer
 		amountToCopy := uint32(len(payload))
-		for (seqNumReceived+amountToCopy)-tcbEntry.RCV.LBR == MAX_BUF_SIZE {
-			// wait here until there is space available to copy the entire payload
-			// into the buffer
-
-			// TODO: is it better to wait for every iteration of the copying?
-		}
-
+		log.Printf("Amount of data received: %d\n", amountToCopy)
 		amountCopied := uint32(0)
 
-		for amountCopied < amountToCopy {
-			nxt_index := SequenceToBufferInd(tcbEntry.RCV.NXT) // next pointer relative to buffer
+		if amountToCopy > 0 {
+			for amountCopied < amountToCopy {
+				nxt_index := SequenceToBufferInd(tcbEntry.RCV.NXT) // next pointer relative to buffer
 
-			remainingBufSize := MAX_BUF_SIZE - (tcbEntry.RCV.NXT - tcbEntry.RCV.LBR + 1) // maximum possible read length ()
-			toCopy := Min(remainingBufSize, amountToCopy-amountCopied)
+				remainingBufSize := MAX_BUF_SIZE - (tcbEntry.RCV.NXT - tcbEntry.RCV.LBR) // maximum possible read length ()
+				toCopy := Min(remainingBufSize, amountToCopy-amountCopied)
 
-			if nxt_index+toCopy >= MAX_BUF_SIZE {
-				firstCopy := MAX_BUF_SIZE - nxt_index
-				copy(tcbEntry.RCV.Buffer[nxt_index:], payload[amountCopied:amountCopied+firstCopy])
-				secondCopy := toCopy - firstCopy
-				copy(tcbEntry.RCV.Buffer[:secondCopy], payload[amountCopied+firstCopy:amountCopied+firstCopy+secondCopy])
-			} else {
-				copy(tcbEntry.RCV.Buffer[nxt_index:nxt_index+toCopy], payload[amountCopied:amountCopied+toCopy])
+				if nxt_index+toCopy >= MAX_BUF_SIZE {
+					firstCopy := MAX_BUF_SIZE - nxt_index
+					copy(tcbEntry.RCV.Buffer[nxt_index:], payload[amountCopied:amountCopied+firstCopy])
+					secondCopy := toCopy - firstCopy
+					copy(tcbEntry.RCV.Buffer[:secondCopy], payload[amountCopied+firstCopy:amountCopied+firstCopy+secondCopy])
+				} else {
+					copy(tcbEntry.RCV.Buffer[nxt_index:nxt_index+toCopy], payload[amountCopied:amountCopied+toCopy])
+				}
+
+				amountCopied += toCopy
+				tcbEntry.RCV.NXT += toCopy
+				tcbEntry.RCV.WND -= toCopy
 			}
+			buf := &bytes.Buffer{}
+			binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
+			binary.Write(buf, binary.BigEndian, socketData.DestAddr)
 
-			amountCopied += toCopy
-			tcbEntry.RCV.NXT += toCopy
-
+			// the ack number should be updated because tcbEntry.RCV.NXT is updated
+			log.Printf("RECEIVE NXT: %d\n", tcbEntry.RCV.NXT)
+			tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
+			bufToSend := buf.Bytes()
+			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
+			log.Print("Sending ack!")
+			t.IPLayerChannel <- bufToSend
 		}
+	} else {
+		// or sequence number is greater, in which case -> early arrivals queue
 	}
 
 	tcbEntry.RCV.ReadBlockedCond.Signal()
-	tcbEntry.TCBLock.Unlock()
 
-	// or sequence number is greater, in which case -> early arrivals queue
+	// FOR THE SENDER on receiving ACKS from the RECEIVER
+	ackNum := tcpHeader.AckNumber()
+
+	log.Printf("Ack num: %d\n", ackNum)
+	if tcpHeader.WindowSize() == 0 { // if the received advertized window size fell to 0, and the ack is out range, drop the packet
+		if ackNum <= tcbEntry.SND.UNA || ackNum > tcbEntry.SND.NXT {
+			return
+		}
+	} else if ackNum <= tcbEntry.SND.UNA || (ackNum > tcbEntry.SND.WND+tcbEntry.SND.UNA && tcbEntry.SND.WND != 0) {
+		// otherwise we want to consider the case where we zero-probe
+		// and the NXT hasn't yet been updated with the correct value but the new window size has been received,
+		// so we use the window size to determine if the ACK num falls in range
+		log.Print("Invalid sequence number, out of window / too old")
+		log.Printf("WND size: %d\n", uint32(tcpHeader.WindowSize()))
+		log.Printf("NXT: %d\n", tcbEntry.SND.NXT)
+		log.Printf("UNA: %d\n", tcbEntry.SND.UNA)
+		return
+	}
+	tcbEntry.SND.WND = uint32(tcpHeader.WindowSize()) // update the advertised window size given this info
+	tcbEntry.SND.UNA = ackNum                         // set the last unacknowledged byte to be what the receiver has yet to acknowledge
+	// if tcpHeader.WindowSize() > 0 {
+	tcbEntry.SND.WriteBlockedCond.Signal()
+	tcbEntry.SND.ZeroBlockedCond.Signal()
+	// }
 }
 
 // always running go routine that is sending data and checking to see if the buffer is empty
@@ -345,8 +405,12 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 		log.Printf("WND Sending: %d\n", tcbEntry.SND.WND)
 		for tcbEntry.SND.NXT-tcbEntry.SND.UNA < tcbEntry.SND.WND {
 			log.Print("Each iteration of send 2")
+			log.Printf("NXT prior to sending: %d\n", tcbEntry.SND.NXT)
+			log.Printf("LBW prior to sending: %d\n", tcbEntry.SND.LBW)
+
 			for tcbEntry.SND.NXT == tcbEntry.SND.LBW { // wait for more data to be written
 				tcbEntry.SND.SendBlockedCond.Wait()
+				log.Print("No longer waiting here because data has been written")
 			}
 
 			// how much we can send, which is constrainted by the window size starting from UNA
@@ -361,7 +425,14 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 
 				// grab this amount in the send buffer as our payload
 				nxt_index := SequenceToBufferInd(tcbEntry.SND.NXT)
-				payload := tcbEntry.SND.Buffer[nxt_index : nxt_index+amountToCopy]
+				payload := make([]byte, 0)
+				if nxt_index+amountToCopy >= MAX_BUF_SIZE {
+					amountLeftover := (nxt_index + amountToCopy) - MAX_BUF_SIZE
+					payload = tcbEntry.SND.Buffer[nxt_index:]
+					payload = append(payload, tcbEntry.SND.Buffer[0:amountLeftover]...)
+				} else {
+					payload = tcbEntry.SND.Buffer[nxt_index : nxt_index+amountToCopy]
+				}
 
 				// TODO: think about how fine grained we want the TCB lock to be, i.e. should receive buffer have it's own lock
 
@@ -381,9 +452,46 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 				tcbEntry.SND.NXT += amountToCopy
 			}
 		}
+		if tcbEntry.SND.WND == 0 {
+			cancelChan := make(chan bool)
+			go func() {
+				// timer and we send at each clock tick
+				timer := time.NewTicker(5 * time.Second)
+				for {
+					select {
+					case <-timer.C:
+						log.Print("sending zero packet!")
+						buf := &bytes.Buffer{}
+						binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
+						binary.Write(buf, binary.BigEndian, socketData.DestAddr)
+						tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
+						bufToSend := buf.Bytes()
+						bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
+						nxt_index := SequenceToBufferInd(tcbEntry.SND.NXT)
+						payload := []byte{tcbEntry.SND.Buffer[nxt_index]}
+						bufToSend = append(bufToSend, payload...)
+
+						t.IPLayerChannel <- bufToSend
+					case <-cancelChan:
+						return
+					}
+				}
+			}()
+
+			for tcbEntry.SND.WND == 0 {
+				tcbEntry.SND.ZeroBlockedCond.Wait()
+			}
+
+			tcbEntry.SND.NXT += 1
+			cancelChan <- true
+		}
+
 		// so if they are equal this means that we need to sleep until data has been ACKed
-		for tcbEntry.SND.NXT-tcbEntry.SND.UNA == tcbEntry.SND.WND {
+		for tcbEntry.SND.NXT-tcbEntry.SND.UNA == tcbEntry.SND.WND && tcbEntry.SND.WND != 0 {
+			log.Print("blocked here")
+			log.Printf("window size: %d\n", tcbEntry.SND.WND)
 			tcbEntry.SND.WriteBlockedCond.Wait()
+			log.Print("unblocked here")
 		}
 		tcbEntry.TCBLock.Unlock()
 	}
@@ -427,7 +535,7 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 		// LBW relative to buffer indices
 		lbw_index := SequenceToBufferInd(tcbEntry.SND.LBW)
 
-		if lbw_index+bytesToWrite > MAX_BUF_SIZE { // wrap-around case
+		if lbw_index+bytesToWrite >= MAX_BUF_SIZE { // wrap-around case
 			// need to copy twice for overflow, same logic as in read.
 			copyToEndOfBufferLen := MAX_BUF_SIZE - lbw_index       // length until end of buffer
 			copyOverflowLen := bytesToWrite - copyToEndOfBufferLen // remaining length after ov

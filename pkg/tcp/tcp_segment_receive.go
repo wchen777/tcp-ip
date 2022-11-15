@@ -3,9 +3,10 @@ package tcp
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/google/netstack/tcpip/header"
 	"log"
 	"sync"
+
+	"github.com/google/netstack/tcpip/header"
 )
 
 // TODO: maybe we can have a map of sorts or something
@@ -38,6 +39,7 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 		newTCBEntry.SND.WriteBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 		newTCBEntry.SND.SendBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 		newTCBEntry.RCV.ReadBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
+		newTCBEntry.SND.ZeroBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 		log.Printf("adding this socket data for new entry: %v\n", socketData)
 		t.SocketTable[socketData] = newTCBEntry
 
@@ -67,8 +69,6 @@ func (t *TCPHandler) HandleStateSynSent(tcpHeader header.TCP, tcbEntry *TCB, loc
 	}
 	if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // if syn (still can reach here if ACK is 0)
 		tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // received a new seq number (Y) from SYN-ACK (orSYN) response, set next to Y+1
-		// TODO: fix recv window
-		tcbEntry.RCV.WND = uint32(tcpHeader.WindowSize())
 		tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
 		log.Printf("New window size: %d\n", tcbEntry.SND.WND)
 		tcbEntry.RCV.IRS = tcpHeader.SequenceNumber() // start of client's stream is (Y)

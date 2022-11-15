@@ -26,8 +26,9 @@ type TCPPacket struct {
 }
 
 const (
-	MAX_BUF_SIZE = (1 << 16) - 1 // buffer size
-	MSS_DATA     = 1360          // maximum segment size of the data in the packet, 1400 - TCP_HEADER_SIZE - IP_HEADER_SIZE
+	// MAX_BUF_SIZE = (1 << 16) - 1 // buffer size
+	MAX_BUF_SIZE = 10
+	MSS_DATA     = 1360 // maximum segment size of the data in the packet, 1400 - TCP_HEADER_SIZE - IP_HEADER_SIZE
 )
 
 // The Send struct and Receive structs will be used to implement sliding window
@@ -49,6 +50,7 @@ type Send struct {
 	WriteBlockedCond sync.Cond // for whether or not there is space left in the buffer to be written to from the application
 	SendLock         sync.Mutex
 	SendBlockedCond  sync.Cond
+	ZeroBlockedCond  sync.Cond
 }
 
 /*
@@ -98,6 +100,7 @@ type TCPHandler struct {
 	LocalAddr       uint32
 	CurrentPort     uint16
 	Listeners       []SocketData // store current listeners so we can check to see if we're connecting to a listener
+	IPErrorChannel  chan error
 }
 
 /*
