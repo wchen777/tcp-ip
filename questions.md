@@ -46,13 +46,33 @@ Nick's ideas:
 
 **tcp handler:**
 - synchronization for socket table? + access to entries?
+- refactor the ACK sending to own function, same thing with the packet sending? (do this later)
 
 
-- send / rec lock
-- cond's depending on the send/rec lock ^^ rather than TCB lock
-- refactor sliding window, send, etc
+- send / rec lock vs TCB lock
+  - difficulty is that the sender might need to touch the receive TCB for values, which may cause deadlock if we take a lock on the receiver while they're trying to take a lock for us
+  - cond's depending on the send/rec lock ^^ rather than TCB lock
+  - right now use TCB lock for multiple condition variables, not sure if this is good
+  - NICK SAYS:: use atomic integers, don't need to "cross lock"
+  - if, as a sender, the RCV.NXT is old -> this is ok
+  - if, as a sender, the RCV.NXT is old (bigger than what it should be) -> need to check for a payload that extends farther than our window and truncate
+    - we got rid of this check, so maybe add it back?
+  - (check as the other cases where as a receiver, the sender fields are older due to not taking a lock on the SND values)
 
-- send to an invalid socket index -> needs error message
+- when should a receiver ACK?
+  - should ACK **any** packet that has data (len(payload) > 0), but with our current RCV.NXT.
+    - even if the packet falls out of range of our window, or is less than NXT, ACK back with what we have and do not process the data
+    - if the packet does not have data, the receiver does not need to process it (or send an ACK back)
+  - if it doesn't have data, it may have been meant for the sender side, so still process it as well
 
-- connect with an invalid port number --> who should handle that error case? 
+- data structures for early arrivals queue
+  - FIFO queue:
+  - buffered channel, set a reasonable maximum (but how would we manage segment numbers)
+  - **min heap???** -> just store the (sequence number, seq num + payload size) received
+  - segments received early, what we just need is the boundaries for which the segments were received, (metadata to tell which is the indexing)
+  - the actual data itself can be copied into the received buffer? 
+    - if it doesn't fit, throw it away
+
+- worried about cond's with separate locks,
+  - ex. how will we ensure that the signaller has the mutex that is associated with the cond
 
