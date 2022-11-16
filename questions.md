@@ -55,7 +55,7 @@ Nick's ideas:
   - right now use TCB lock for multiple condition variables, not sure if this is good
   - NICK SAYS:: use atomic integers, don't need to "cross lock"
   - if, as a sender, the RCV.NXT is old -> this is ok
-  - if, as a sender, the RCV.NXT is old (bigger than what it should be) -> need to check for a payload that extends farther than our window and truncate
+  - if, as a sender, the RCV.WND is old (bigger than what it should be) -> need to check for a payload that extends farther than our window and truncate
     - we got rid of this check, so maybe add it back?
   - (check as the other cases where as a receiver, the sender fields are older due to not taking a lock on the SND values)
 
