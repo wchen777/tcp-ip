@@ -48,6 +48,14 @@ Nick's ideas:
 - synchronization for socket table? + access to entries?
 - refactor the ACK sending to own function, same thing with the packet sending? (do this later)
 
+**features to implement**
+- checksum 
+- handshake timeout
+- sendfile command 
+
+**error conditions to handle**
+- are we handling when we send to/read froma a socket that doesn't exist?
+
 
 - send / rec lock vs TCB lock
   - difficulty is that the sender might need to touch the receive TCB for values, which may cause deadlock if we take a lock on the receiver while they're trying to take a lock for us

@@ -190,9 +190,11 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 	}
 
 	amountReadSoFar := uint32(0)
+
+	tcbEntry.TCBLock.Lock()
+
 	for amountReadSoFar < amountToRead {
 
-		tcbEntry.TCBLock.Lock()
 		if tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
 			// TODO: is it okay if readAll isn't specified and we return 0 bytes read?
 			// 		 not sure what it means to return with at least 1 byte read
@@ -202,6 +204,7 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 			} else {
 				// wait until we can get more data to read until amountToRead
 				for tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
+					log.Print("Blocked because LBR is equal NXT")
 					tcbEntry.RCV.ReadBlockedCond.Wait()
 				}
 			}
@@ -243,11 +246,11 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 		// increment LBR and the number of bytes read so far
 		tcbEntry.RCV.LBR += bytesToRead
 		tcbEntry.RCV.WND += bytesToRead
+		log.Printf("Window after reading: %d\n", tcbEntry.RCV.WND)
 		amountReadSoFar += bytesToRead
-
-		tcbEntry.TCBLock.Unlock()
 	}
 
+	tcbEntry.TCBLock.Unlock()
 	return amountReadSoFar, nil
 }
 
@@ -289,8 +292,6 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 		if seqNumReceived < tcbEntry.RCV.NXT {
 			log.Print("Dropping packet because we've already received it")
 			// sending back ACK just in case for duplicates?
-			// if tcbEntry.RCV.WND == 0 {
-			log.Print("responding to zero probing")
 			buf := &bytes.Buffer{}
 			binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
 			binary.Write(buf, binary.BigEndian, socketData.DestAddr)
@@ -302,8 +303,6 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 			log.Print("Sending ack!")
 			t.IPLayerChannel <- bufToSend
-			// }
-			//return
 		} else if seqNumReceived >= tcbEntry.RCV.NXT+tcbEntry.RCV.WND {
 			// we've received a SEQ that is out of the range of the window and not meant for us, still send ACK
 			log.Printf("sequence number received: %d\n", seqNumReceived)
@@ -319,15 +318,13 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 			binary.Write(buf, binary.BigEndian, socketData.DestAddr)
 
 			// the ack number should be updated because tcbEntry.RCV.NXT is updated
-			log.Printf("RECEIVE NXT: %d\n", tcbEntry.RCV.NXT)
+			log.Printf("Sending ack RECEIVE NXT: %d\n", tcbEntry.RCV.NXT)
+			log.Printf("Sending ack RECEIVE WND: %d\n", tcbEntry.RCV.WND)
 			tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
 			bufToSend := buf.Bytes()
 			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 			log.Print("Sending ack!")
 			t.IPLayerChannel <- bufToSend
-
-			// don't return here??!!
-			//return
 		} else if seqNumReceived == tcbEntry.RCV.NXT {
 			// FOR THE RECEIVER and incrementing the NXT pointer
 
@@ -368,7 +365,8 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 			binary.Write(buf, binary.BigEndian, socketData.DestAddr)
 
 			// the ack number should be updated because tcbEntry.RCV.NXT is updated
-			log.Printf("RECEIVE NXT: %d\n", tcbEntry.RCV.NXT)
+			log.Printf("Sending ACK RECEIVE NXT: %d\n", tcbEntry.RCV.NXT)
+			log.Printf("Sending ACK WND: %d\n", tcbEntry.RCV.WND)
 			tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
 			bufToSend := buf.Bytes()
 			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
@@ -387,8 +385,8 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 	// no data could be sent from the other side, but still want to process the sender side!
 	ackNum := tcpHeader.AckNumber()
 
-	log.Printf("Ack num: %d\n", ackNum)
-	log.Printf("Window size : %d\n", uint32(tcpHeader.WindowSize()))
+	log.Printf("Ack num received: %d\n", ackNum)
+	log.Printf("Window size received: %d\n", uint32(tcpHeader.WindowSize()))
 	if tcpHeader.WindowSize() == 0 { // if the received advertized window size fell to 0, and the ack is out range, drop the packet
 		if ackNum <= tcbEntry.SND.UNA || ackNum > tcbEntry.SND.NXT {
 			return
@@ -405,7 +403,7 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 	}
 	tcbEntry.SND.WND = uint32(tcpHeader.WindowSize()) // update the advertised window size given this info
 	tcbEntry.SND.UNA = ackNum                         // set the last unacknowledged byte to be what the receiver has yet to acknowledge
-	tcbEntry.SND.WriteBlockedCond.Signal()
+	tcbEntry.SND.WriteBlockedCond.Broadcast()         // broadcast instead since both the writer and sender rely on UNA
 	if tcpHeader.WindowSize() > 0 {
 		log.Print("Signaling because the window size is no longer 0")
 		tcbEntry.SND.ZeroBlockedCond.Signal()
@@ -444,7 +442,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 			for tcbEntry.SND.NXT == tcbEntry.SND.LBW { // wait for more data to be written
 				// checking this before each iterating of sending
 				tcbEntry.SND.SendBlockedCond.Wait()
-				log.Print("No longer waiting here because data has been written")
+				log.Print("No longer waiting here because data has been written 1")
 			}
 
 			// how much we can send, which is constrainted by the window size starting from UNA
@@ -490,7 +488,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 		for tcbEntry.SND.NXT == tcbEntry.SND.LBW { // wait for more data to be written
 			// we need to make sure that there's actually data in the event that the window is zero
 			tcbEntry.SND.SendBlockedCond.Wait()
-			log.Print("No longer waiting here because data has been written")
+			log.Print("No longer waiting here because data has been written 2")
 		}
 
 		if tcbEntry.SND.WND == 0 && tcbEntry.SND.LBW > tcbEntry.SND.NXT {
