@@ -65,17 +65,7 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	newTCBEntry.RCV.WND = MAX_BUF_SIZE
 
 	// create a SYN packet with a random sequence number
-	tcpHeader := header.TCPFields{
-		SrcPort:       socketData.LocalPort,
-		DstPort:       port,
-		SeqNum:        newTCBEntry.SND.ISS,
-		AckNum:        0,
-		DataOffset:    20,
-		Flags:         header.TCPFlagSyn,
-		WindowSize:    65535,
-		Checksum:      0,
-		UrgentPointer: 0,
-	}
+	tcpHeader := CreateTCPHeader(t.LocalAddr, destAddr, socketData.LocalPort, port, newTCBEntry.SND.ISS, 0, header.TCPFlagSyn, MAX_BUF_SIZE, []byte{})
 
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.BigEndian, t.LocalAddr)
@@ -298,7 +288,8 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 
 			// the ack number should be updated because tcbEntry.RCV.NXT is updated
 			log.Printf("RECEIVE NXT: %d\n", tcbEntry.RCV.NXT)
-			tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
+			tcpHeader := CreateTCPHeader(socketData.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
+				tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 			bufToSend := buf.Bytes()
 			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 			log.Print("Sending ack!")
@@ -320,7 +311,8 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 			// the ack number should be updated because tcbEntry.RCV.NXT is updated
 			log.Printf("Sending ack RECEIVE NXT: %d\n", tcbEntry.RCV.NXT)
 			log.Printf("Sending ack RECEIVE WND: %d\n", tcbEntry.RCV.WND)
-			tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
+			tcpHeader := CreateTCPHeader(socketData.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
+				tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 			bufToSend := buf.Bytes()
 			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 			log.Print("Sending ack!")
@@ -367,7 +359,8 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 			// the ack number should be updated because tcbEntry.RCV.NXT is updated
 			log.Printf("Sending ACK RECEIVE NXT: %d\n", tcbEntry.RCV.NXT)
 			log.Printf("Sending ACK WND: %d\n", tcbEntry.RCV.WND)
-			tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
+			tcpHeader := CreateTCPHeader(socketData.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
+				tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 			bufToSend := buf.Bytes()
 			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 			log.Print("Sending ack!")
@@ -472,7 +465,8 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 				buf := &bytes.Buffer{}
 				binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
 				binary.Write(buf, binary.BigEndian, socketData.DestAddr)
-				tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
+				tcpHeader := CreateTCPHeader(socketData.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
+					tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, payload)
 				bufToSend := buf.Bytes()
 				bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 				bufToSend = append(bufToSend, payload...)
@@ -493,6 +487,8 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 
 		if tcbEntry.SND.WND == 0 && tcbEntry.SND.LBW > tcbEntry.SND.NXT {
 			cancelChan := make(chan bool)
+
+			// zero-probing goroutine
 			go func() {
 				// timer and we send at each clock tick
 				timer := time.NewTicker(5 * time.Second)
@@ -504,11 +500,14 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 						binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
 						binary.Write(buf, binary.BigEndian, socketData.DestAddr)
 						log.Print("sending next byte of data for zero probing")
-						tcpHeader := CreateTCPHeader(socketData.LocalPort, socketData.DestPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND)
+
+						nxt_index := SequenceToBufferInd(tcbEntry.SND.NXT)
+						payload := []byte{tcbEntry.SND.Buffer[nxt_index]} // try and send a single next byte zero-probe
+
+						tcpHeader := CreateTCPHeader(socketData.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
+							tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, payload)
 						bufToSend := buf.Bytes()
 						bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
-						nxt_index := SequenceToBufferInd(tcbEntry.SND.NXT)
-						payload := []byte{tcbEntry.SND.Buffer[nxt_index]}
 						bufToSend = append(bufToSend, payload...)
 						t.IPLayerChannel <- bufToSend
 					case <-cancelChan:
@@ -517,11 +516,13 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 				}
 			}()
 
+			// cond wait for the zero probe
 			for tcbEntry.SND.WND == 0 {
 				log.Printf("blocking here because the window is 0\n")
 				tcbEntry.SND.ZeroBlockedCond.Wait()
 			}
 
+			// once we are done zero probing, cancel the zero-probing goroutine
 			tcbEntry.SND.NXT += 1
 			cancelChan <- true
 		}

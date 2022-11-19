@@ -123,6 +123,19 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	localAddr := binary.BigEndian.Uint32(packet.Header.Dst.To4())
 	destAddr := binary.BigEndian.Uint32(packet.Header.Src.To4())
 
+	originalChecksum := tcpHeader.Checksum()      // Save original checksum
+	tcpHeaderFields := ParseTCPHeader(&tcpHeader) // convert the tcp header to tcp fields
+	tcpHeaderFields.Checksum = 0                  // set checksum field to 0 to recompute
+
+	// compute checksum.
+	computedChecksum := ComputeTCPChecksum(&tcpHeaderFields, localAddr, destAddr, tcpPayload)
+	// if checksum fails, drop packet.
+	if computedChecksum != originalChecksum {
+		log.Printf("Computed checksum: %d, original checksum: %d\n", computedChecksum, originalChecksum)
+		log.Print("Dropping packet -- checksum failed")
+		return
+	}
+
 	// check the table for the connection
 	key := SocketData{LocalAddr: localAddr, LocalPort: srcPort, DestAddr: destAddr, DestPort: destPort}
 	listenerKey := SocketData{LocalAddr: localAddr, LocalPort: srcPort, DestAddr: 0, DestPort: 0}

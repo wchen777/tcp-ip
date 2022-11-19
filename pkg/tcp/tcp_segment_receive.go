@@ -47,7 +47,8 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 		buf := &bytes.Buffer{}
 		binary.Write(buf, binary.BigEndian, localAddr)
 		binary.Write(buf, binary.BigEndian, destAddr)
-		tcpHeader := CreateTCPHeader(socketData.LocalPort, destPort, newTCBEntry.SND.ISS, newTCBEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck, newTCBEntry.RCV.WND)
+		tcpHeader := CreateTCPHeader(localAddr, destAddr, socketData.LocalPort, destPort, newTCBEntry.SND.ISS,
+			newTCBEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck, newTCBEntry.RCV.WND, []byte{})
 		bufToSend := buf.Bytes()
 		log.Printf("bytes to send: %v\n", bufToSend)
 		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, destAddr)...)
@@ -82,7 +83,7 @@ func (t *TCPHandler) HandleStateSynSent(tcpHeader header.TCP, tcbEntry *TCB, loc
 			tcbEntry.SND.ISS = NewISS()
 
 			// create the tcp header with the ____
-			newTCPHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, MAX_BUF_SIZE)
+			newTCPHeader := CreateTCPHeader(key.LocalAddr, key.DestAddr, srcPort, destPort, tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, MAX_BUF_SIZE, []byte{})
 			buf := &bytes.Buffer{}
 			binary.Write(buf, binary.BigEndian, localAddr)
 			binary.Write(buf, binary.BigEndian, destAddr)
@@ -103,7 +104,7 @@ func (t *TCPHandler) HandleStateSynSent(tcpHeader header.TCP, tcbEntry *TCB, loc
 		// need to send SYN_ACK in this case
 		tcbEntry.SND.ISS = NewISS() // start with a new (Y)
 
-		msgtcpHeader := CreateTCPHeader(srcPort, destPort, tcbEntry.SND.ISS, tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck, tcbEntry.RCV.WND)
+		msgtcpHeader := CreateTCPHeader(key.LocalAddr, key.DestAddr, srcPort, destPort, tcbEntry.SND.ISS, tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 		buf := MarshallTCPHeader(&msgtcpHeader, destAddr)
 
 		t.IPLayerChannel <- buf
