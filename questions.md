@@ -60,6 +60,8 @@ Nick's ideas:
 - calling accept on a non-listener socket 
 - basically what should happen when the operation isn't supported on a socket 
 
+- is shutdown type 3 just close? 
+
 - send / rec lock vs TCB lock
   - difficulty is that the sender might need to touch the receive TCB for values, which may cause deadlock if we take a lock on the receiver while they're trying to take a lock for us
   - cond's depending on the send/rec lock ^^ rather than TCB lock

@@ -607,6 +607,7 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 }
 
 func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
+	// send a FIN
 	return nil
 }
 
@@ -614,5 +615,10 @@ func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
 // then we can call getTye to get the exact object
 func (t *TCPHandler) Close(socket Socket) error {
 	// TODO:
+	// send a FIN to receiver
+	// Go into FIN_WAIT_1
+	// Go into FIN_WAIT_2 after receiving ACK from receiver
+	// Go into TIME_WAIT after receiving FIN from the receiver
+	// Send ACK and wait 2 * MSL before going into CLOSED and deleting the TCB
 	return nil
 }
