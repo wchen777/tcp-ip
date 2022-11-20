@@ -7,6 +7,7 @@ import (
 	"tcp-ip/pkg/ip"
 
 	"github.com/google/netstack/tcpip/header"
+	"go.uber.org/atomic"
 )
 
 // The TCP Handler file contains the function implementations for the application handler interface
@@ -29,6 +30,7 @@ const (
 	// MAX_BUF_SIZE = (1 << 16) - 1 // buffer size
 	MAX_BUF_SIZE = 10
 	MSS_DATA     = 1360 // maximum segment size of the data in the packet, 1400 - TCP_HEADER_SIZE - IP_HEADER_SIZE
+	MSL          = 5    // maximum segment lifetime
 )
 
 // The Send struct and Receive structs will be used to implement sliding window
@@ -76,8 +78,9 @@ type TCB struct {
 	ReceiveChan    chan SocketData // some sort of channel when receiving another message on this layer
 	SND            *Send
 	RCV            *Receive
-	TCBLock        sync.Mutex // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
-	ListenKey      SocketData // keeps track of the listener to properly notify the listener
+	TCBLock        sync.Mutex   // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
+	ListenKey      SocketData   // keeps track of the listener to properly notify the listener
+	Cancelled      *atomic.Bool // determines whether or not a user has cancelled sending
 	// TODO:
 	// pointer to retransmit queue and current segment
 
@@ -169,13 +172,20 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		case ESTABLISHED:
 			log.Printf("received a segment when state is in ESTABLISHED")
 			// call a function or have a function that's always running?
-			t.Receive(tcpHeader, tcpPayload, &key, tcbEntry)
+			t.HandleEstablished(tcpHeader, tcbEntry, &key, tcpPayload)
 		case FIN_WAIT_1:
+			log.Print("received a segment when state is in FIN_WAIT_1")
+			t.HandleFinWait1(tcpHeader, tcbEntry, &key, tcpPayload)
 		case FIN_WAIT_2:
+			log.Printf("received a segment when state is in FIN WAIT 2")
+			t.HandleFinWait2(tcpHeader, tcbEntry, &key, tcpPayload)
 		case CLOSING:
 		case TIME_WAIT:
 		case CLOSE_WAIT:
+			log.Print("dropping packet because in CLOSE_WAIT")
+			return
 		case LAST_ACK:
+			t.HandleLastAck(tcpHeader, tcbEntry, &key)
 		}
 	} else {
 		// connection does not exist

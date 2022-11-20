@@ -5,8 +5,10 @@ import (
 	"encoding/binary"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
+	"go.uber.org/atomic"
 )
 
 // TODO: maybe we can have a map of sorts or something
@@ -24,6 +26,7 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 			ReceiveChan: make(chan SocketData),
 			SND:         &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
 			RCV:         &Receive{Buffer: make([]byte, MAX_BUF_SIZE)}}
+		newTCBEntry.Cancelled = atomic.NewBool(false)
 
 		newTCBEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // acknowledge the SYN's seq number (X+1)
 		newTCBEntry.RCV.LBR = newTCBEntry.RCV.NXT
@@ -146,16 +149,66 @@ func (t *TCPHandler) HandleStateSynReceived(tcpHeader header.TCP, tcbEntry *TCB,
 	}
 }
 
-func (t *TCPHandler) HandleEstablished(tcpPacket TCPPacket) {
-
+func (t *TCPHandler) HandleEstablished(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, tcpPayload []byte) {
+	// TODO: check if FIN flag is set --> if so, send back an ACK for the seq num+1 and go into passive close (CLOSE WAIT)
+	if (tcpHeader.Flags() & header.TCPFlagFin) != 0 {
+		t.ReceiveFin(tcpHeader, key, tcbEntry) // FIN packet
+	} else {
+		t.Receive(tcpHeader, tcpPayload, key, tcbEntry) // receive a "normal" packet
+	}
 }
 
-func (t *TCPHandler) HandleFinWait1(tcpPacket TCPPacket) {
-
+func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, tcpPayload []byte) {
+	// want to receive an ACK in FIN WAIT 1
+	if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
+		tcbEntry.TCBLock.Lock()
+		log.Printf("Received ACK Num: %d\n", tcpHeader.AckNumber())
+		log.Printf("NXT number to check: %d\n", tcbEntry.SND.NXT)
+		if tcpHeader.AckNumber() == tcbEntry.SND.NXT { // if the ACK acknowledges our FIN packet, go into FIN WAIT 2
+			log.Print("Updating state to be FIN_WAIT_2")
+			tcbEntry.State = FIN_WAIT_2
+		}
+		tcbEntry.TCBLock.Unlock()
+	}
+	// t.Receive(tcpHeader, tcpPayload, key, tcbEntry)
 }
 
-func (t *TCPHandler) HandleFinWait2(tcpPacket TCPPacket) {
+func (t *TCPHandler) HandleFinWait2(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, tcpPayload []byte) {
+	if (tcpHeader.Flags() & header.TCPFlagFin) != 0 {
+		// TODO: what would the sequence number be here? Do we need to error check it?
+		// Receiving a FIN, send ACK back with incremented RCV.NXT
+		tcbEntry.TCBLock.Lock()
 
+		// change state to be TIME_WAIT
+		tcbEntry.State = TIME_WAIT
+		buf := &bytes.Buffer{}
+		binary.Write(buf, binary.BigEndian, key.LocalAddr)
+		binary.Write(buf, binary.BigEndian, key.DestAddr)
+
+		tcbEntry.RCV.NXT += 1 // increment our NXT for the ACK
+
+		tcpHdr := CreateTCPHeader(key.LocalAddr, key.DestAddr, key.LocalPort, key.DestPort,
+			tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
+		bufToSend := buf.Bytes()
+		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, key.DestAddr)...)
+
+		log.Print("Sending ack for FIN: FIN WAIT 2")
+		t.IPLayerChannel <- bufToSend
+		// Go into TIMEWAIT --> wait 2 * MSL
+		timer := time.NewTicker(2 * time.Second * MSL)
+		for {
+			select {
+			case <-timer.C:
+				// then go into CLOSED and notify the close routine that we have reached close
+				tcbEntry.State = CLOSED
+				tcbEntry.ReceiveChan <- *key
+				tcbEntry.TCBLock.Unlock()
+			}
+		}
+	} else {
+		// TODO: can you still receive packets in FIN_WAIT_2?
+		t.Receive(tcpHeader, tcpPayload, key, tcbEntry)
+	}
 }
 
 func (t *TCPHandler) HandleClosing(tcpPacket TCPPacket) {
@@ -163,9 +216,18 @@ func (t *TCPHandler) HandleClosing(tcpPacket TCPPacket) {
 }
 
 func (t *TCPHandler) HandleTimeWait(tcpPacket TCPPacket) {
-
+	// TODO: maybe handle when we receive a SYN
 }
 
-func (t *TCPHandler) HandleCloseWait(tcpPacket TCPPacket) {
-
+func (t *TCPHandler) HandleLastAck(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData) {
+	// once in last ack, want to receive an ACK
+	if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
+		tcbEntry.TCBLock.Lock()
+		// if the ACK acknowledges our FIN packet, go into CLOSED
+		if tcpHeader.AckNumber() == tcbEntry.SND.NXT {
+			tcbEntry.State = CLOSED
+			tcbEntry.ReceiveChan <- *key // notify the applications close function that we can return
+		}
+		tcbEntry.TCBLock.Unlock()
+	}
 }

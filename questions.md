@@ -49,7 +49,6 @@ Nick's ideas:
 - refactor the ACK sending to own function, same thing with the packet sending? (do this later)
 
 **features to implement**
-- checksum 
 - handshake timeout
 - sendfile command 
 - retransmission queue and timeout

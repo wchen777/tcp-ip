@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/netstack/tcpip/header"
+	"go.uber.org/atomic"
 )
 
 // The TCP Handler Core file implements the functions for the "network stack".
@@ -47,6 +48,7 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 		ReceiveChan: make(chan SocketData), // some sort of channel when receiving another message on this layer
 		SND:         &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
 		RCV:         &Receive{Buffer: make([]byte, MAX_BUF_SIZE)}}
+	newTCBEntry.Cancelled = atomic.NewBool(false)
 
 	newTCBEntry.SND.WriteBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 	newTCBEntry.SND.SendBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
@@ -127,7 +129,8 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 
 	// if the entry doesn't yet exist
 	listenerSocket := &VTCPListener{SocketTableKey: socketTableKey, TCPHandler: t} // the listener socket that is returned to the user
-	newTCBEntry := &TCB{                                                           // start a TCB entry on the listen state to represent the listen socket
+	listenerSocket.Cancelled = atomic.NewBool(false)
+	newTCBEntry := &TCB{ // start a TCB entry on the listen state to represent the listen socket
 		State:       LISTEN,
 		ReceiveChan: make(chan SocketData),
 	}
@@ -159,7 +162,11 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 
 	listenerTCBEntry.PendingConnMutex.Lock()
 	for len(listenerTCBEntry.PendingConnections) == 0 {
+		log.Print("blocking here")
 		listenerTCBEntry.PendingConnCond.Wait()
+		if vl.Cancelled.Load() == true {
+			return nil, errors.New("Listener has been cancelled due to close")
+		}
 	}
 	connEntry := listenerTCBEntry.PendingConnections[0]
 	listenerTCBEntry.PendingConnections = listenerTCBEntry.PendingConnections[1:]
@@ -248,8 +255,6 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 
 // }
 
-// always running go routine that is receiving data from the channel
-
 // Get the sequence number to figure out where to copy the data into the buffer
 // copy data into buffer starting from NXT (presumably), while also taking into account the wrapping around
 
@@ -270,7 +275,8 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 
 	// ---------------- for the RECEIVER on receiving DATA from a SENDER --------------- //
 
-	// first, check if the packet has data, if it doesn't, then the receiver doesn't care about it. (but it might be an ACK for the sender)
+	// first, check if the packet has data, if it doesn't, then the receiver doesn't care about it.
+	// (but it might be an ACK for the sender)
 
 	if len(payload) > 0 {
 		// two cases:
@@ -403,6 +409,29 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 	}
 }
 
+// function to handle a FIN packet and going into passive close
+func (t *TCPHandler) ReceiveFin(tcpHeader header.TCP, socketData *SocketData, tcbEntry *TCB) {
+	log.Print("Received FIN packet while in established")
+	tcbEntry.State = CLOSE_WAIT // go into CLOSE WAIT statea (passive close)
+	// send an ACK back
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
+	binary.Write(buf, binary.BigEndian, socketData.DestAddr)
+
+	tcbEntry.TCBLock.Lock()
+	// TODO: do we need to increment the ack number here? kind of underspecified
+	tcbEntry.RCV.NXT += 1
+
+	tcpHdr := CreateTCPHeader(socketData.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
+		tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
+	bufToSend := buf.Bytes()
+	bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, socketData.DestAddr)...)
+	tcbEntry.TCBLock.Unlock()
+
+	log.Print("Sending ack for FIN")
+	t.IPLayerChannel <- bufToSend
+}
+
 // always running go routine that is sending data and checking to see if the buffer is empty
 // waiting on a condition variable that will be notified in write
 
@@ -434,7 +463,15 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 
 			for tcbEntry.SND.NXT == tcbEntry.SND.LBW { // wait for more data to be written
 				// checking this before each iterating of sending
+				if tcbEntry.Cancelled.Load() {
+					tcbEntry.TCBLock.Unlock()
+					return
+				}
 				tcbEntry.SND.SendBlockedCond.Wait()
+				if tcbEntry.Cancelled.Load() {
+					tcbEntry.TCBLock.Unlock()
+					return
+				}
 				log.Print("No longer waiting here because data has been written 1")
 			}
 
@@ -471,6 +508,11 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 				bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 				bufToSend = append(bufToSend, payload...)
 
+				// TODO: check cancellation
+				if tcbEntry.Cancelled.Load() {
+					tcbEntry.TCBLock.Unlock()
+					return
+				}
 				t.IPLayerChannel <- bufToSend
 
 				// increment next pointer
@@ -481,7 +523,15 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 
 		for tcbEntry.SND.NXT == tcbEntry.SND.LBW { // wait for more data to be written
 			// we need to make sure that there's actually data in the event that the window is zero
+			if tcbEntry.Cancelled.Load() {
+				tcbEntry.TCBLock.Unlock()
+				return
+			}
 			tcbEntry.SND.SendBlockedCond.Wait()
+			if tcbEntry.Cancelled.Load() {
+				tcbEntry.TCBLock.Unlock()
+				return
+			}
 			log.Print("No longer waiting here because data has been written 2")
 		}
 
@@ -509,6 +559,11 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 						bufToSend := buf.Bytes()
 						bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 						bufToSend = append(bufToSend, payload...)
+						// TODO: check cancellation
+						if tcbEntry.Cancelled.Load() {
+							tcbEntry.SND.ZeroBlockedCond.Signal()
+							return
+						}
 						t.IPLayerChannel <- bufToSend
 					case <-cancelChan:
 						return
@@ -520,6 +575,10 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 			for tcbEntry.SND.WND == 0 {
 				log.Printf("blocking here because the window is 0\n")
 				tcbEntry.SND.ZeroBlockedCond.Wait()
+				if tcbEntry.Cancelled.Load() {
+					tcbEntry.TCBLock.Unlock()
+					return
+				}
 			}
 
 			// once we are done zero probing, cancel the zero-probing goroutine
@@ -533,8 +592,16 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 			// window is zero, it's just that we can't send any more data until earlier "entries" have been ACKed
 			log.Print("blocked here")
 			log.Printf("window size: %d\n", tcbEntry.SND.WND)
+			if tcbEntry.Cancelled.Load() {
+				tcbEntry.TCBLock.Unlock()
+				return
+			}
 			tcbEntry.SND.WriteBlockedCond.Wait()
 			log.Print("unblocked here")
+			if tcbEntry.Cancelled.Load() {
+				tcbEntry.TCBLock.Unlock()
+				return
+			}
 		}
 		tcbEntry.TCBLock.Unlock()
 	}
@@ -613,12 +680,64 @@ func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
 
 // Both socket types will need a close, so pass in socket instead
 // then we can call getTye to get the exact object
-func (t *TCPHandler) Close(socket Socket) error {
-	// TODO:
+func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
+	// STEPS:
 	// send a FIN to receiver
-	// Go into FIN_WAIT_1
-	// Go into FIN_WAIT_2 after receiving ACK from receiver
-	// Go into TIME_WAIT after receiving FIN from the receiver
-	// Send ACK and wait 2 * MSL before going into CLOSED and deleting the TCB
+	tcbEntry := t.SocketTable[vc.SocketTableKey]
+	// TODO: what should the
+	tcbEntry.TCBLock.Lock()
+
+	tcpHeader := CreateTCPHeader(t.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
+		tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagFin, tcbEntry.RCV.WND, []byte{})
+
+	// prevent any more sending
+	tcbEntry.Cancelled.Store(true)
+	// signal potentially blocked send routine
+	tcbEntry.SND.SendBlockedCond.Signal()
+	tcbEntry.SND.WriteBlockedCond.Signal()
+
+	// send FIN packet
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.BigEndian, t.LocalAddr)
+	binary.Write(buf, binary.BigEndian, socketData.DestAddr)
+	bufToSend := buf.Bytes()
+	bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
+
+	t.IPLayerChannel <- bufToSend
+
+	// Go into FIN WAIT 1 if ACTIVE CLOSE, otherwise go into LAST ACK for PASSIVE CLOSE
+	if tcbEntry.State == CLOSE_WAIT {
+		tcbEntry.State = LAST_ACK
+	} else {
+		tcbEntry.State = FIN_WAIT_1
+	}
+
+	tcbEntry.SND.NXT += 1
+	tcbEntry.TCBLock.Unlock()
+
+	for {
+		// wait to get notification that we are in FIN WAIT 2 or in CLOSED
+		// depending on active vs. passive close
+		select {
+		case <-tcbEntry.ReceiveChan:
+			delete(t.SocketTable, *socketData)
+			return nil
+		}
+	}
+}
+
+func (t *TCPHandler) CloseListener(vl *VTCPListener) error {
+	// set the cancelled value for the listener to be true
+	// the accept call will drop the new connection if the cancelled value is true instead of processing it
+	log.Print("cancelling the listener")
+	vl.Cancelled.Store(true)
+
+	// signal the pending conn cond in accept if it is waiting on a new connection
+	t.SocketTable[vl.SocketTableKey].PendingConnMutex.Lock()
+	t.SocketTable[vl.SocketTableKey].PendingConnCond.Signal()
+	t.SocketTable[vl.SocketTableKey].PendingConnMutex.Unlock()
+
+	// delete the listener from the socket table
+	delete(t.SocketTable, vl.SocketTableKey)
 	return nil
 }

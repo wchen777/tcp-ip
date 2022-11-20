@@ -70,5 +70,5 @@ func (vc *VTCPConn) VShutdown(sdType int) error {
  * reaches the CLOSED state.  For example, after VClose() any data not yet ACKed should still be retransmitted.
  */
 func (vc *VTCPConn) VClose() error {
-	return vc.TCPHandler.Close(vc)
+	return vc.TCPHandler.Close(&vc.SocketTableKey, vc)
 }

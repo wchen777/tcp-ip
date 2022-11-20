@@ -198,13 +198,13 @@ func (n *Node) REPL() {
 			w.Flush()
 		case "s":
 			if len(commands) != 3 {
-				fmt.Print("Invalid number of arguments for s")
+				fmt.Print("Invalid number of arguments for s\n")
 				break
 			}
 			n.SendTCPCommand(line)
 		case "r":
 			if len(commands) != 4 {
-				fmt.Print("Invalid number of arguments for s")
+				fmt.Print("Invalid number of arguments for r\n")
 				break
 			}
 			socketID, err := strconv.Atoi(commands[1])
@@ -225,7 +225,35 @@ func (n *Node) REPL() {
 				fmt.Printf("Invalid option for read: %s\n", commands[3])
 				break
 			}
-
+		case "cl":
+			if len(commands) != 2 {
+				fmt.Printf("Invalid number of arguments for cl\n")
+				break
+			}
+			socketId, err := strconv.Atoi(commands[1])
+			if err != nil {
+				fmt.Printf("Invalid socket id number: %s\n", commands[1])
+				break
+			}
+			err = n.CloseTCPCommand(socketId)
+			if err != nil {
+				fmt.Print(err)
+			}
+		case "sd":
+			if len(commands) != 2 {
+				fmt.Printf("Invalid number of arguments for sd\n")
+				break
+			}
+		case "sf":
+			if len(commands) != 3 {
+				fmt.Printf("Invalid number of arguments for sf\n")
+				break
+			}
+		case "rf":
+			if len(commands) != 3 {
+				fmt.Printf("Invalid number of arguments for rf\n")
+				break
+			}
 		default:
 			n.PrintHelp(w)
 			w.Flush()

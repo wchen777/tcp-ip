@@ -1,10 +1,13 @@
 package tcp
 
+import "go.uber.org/atomic"
+
 // Storing a socket data key so that we can index into the socket table
 // in the handler
 type VTCPListener struct {
 	SocketTableKey SocketData
 	TCPHandler     *TCPHandler
+	Cancelled      *atomic.Bool
 }
 
 func (vl *VTCPListener) GetType() SocketType {
@@ -35,5 +38,5 @@ func (vl *VTCPListener) VAccept() (*VTCPConn, error) {
  */
 func (vl *VTCPListener) VClose() error {
 	// use the tcp handler in the listener struct to cleanup from the table
-	return vl.TCPHandler.Close(vl)
+	return vl.TCPHandler.CloseListener(vl)
 }

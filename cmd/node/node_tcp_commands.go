@@ -36,8 +36,14 @@ func (n *Node) acceptHelper(listener *tcp.VTCPListener) {
 	for {
 		// once accept returns, create a new entry in socket index table
 		newConn, err := listener.VAccept()
+
 		if err != nil {
 			log.Print(err)
+			return
+		}
+
+		if newConn == nil {
+			log.Print("Listener connection terminated, dropping new pending connection")
 			return
 		}
 
@@ -60,6 +66,9 @@ func (n *Node) ConnectCommand(destAddr net.IP, port uint16) (int, error) {
 func (n *Node) ListSocketCommand(w io.Writer) {
 	fmt.Fprintf(w, "socket\tlocal-addr\tport\tdst-addr\tport\tstatus\n")
 	for i, socket := range n.SocketIndexTable {
+		if socket == nil {
+			continue
+		}
 		socketData := socket.GetSocketTableKey()
 		localAddr := addrNumToIP(socketData.LocalAddr)
 		destAddr := addrNumToIP(socketData.DestAddr)
@@ -78,14 +87,14 @@ func (n *Node) SendTCPCommand(line string) error {
 	}
 
 	if socketID >= len(n.SocketIndexTable) {
-		return errors.New("Invalid socket id")
+		return errors.New("Invalid socket id\n")
 	}
 
 	socketToSend := n.SocketIndexTable[socketID]
 
 	var connSend *tcp.VTCPConn
 	if val, ok := socketToSend.(*tcp.VTCPConn); !ok {
-		return errors.New("Cannot use send command on socket")
+		return errors.New("Cannot use send command on socket\n")
 	} else {
 		connSend = val
 	}
@@ -98,17 +107,17 @@ func (n *Node) SendTCPCommand(line string) error {
 
 func (n *Node) ReadTCPCommand(socketID int, numBytes uint32, readAll bool) error {
 	if socketID >= len(n.SocketIndexTable) {
-		return errors.New("Invalid socket id")
+		return errors.New("Invalid socket id\n")
 	}
 	socketToRead := n.SocketIndexTable[socketID]
 
 	if socketToRead == nil {
-		return errors.New("Socket does not exist")
+		return errors.New("Socket does not exist\n")
 	}
 
 	var connRead *tcp.VTCPConn
 	if val, ok := socketToRead.(*tcp.VTCPConn); !ok {
-		return errors.New("Cannot use read command on socket")
+		return errors.New("Cannot use read command on socket\n")
 	} else {
 		connRead = val
 	}
@@ -118,4 +127,44 @@ func (n *Node) ReadTCPCommand(socketID int, numBytes uint32, readAll bool) error
 	log.Printf("Number of bytes read: %d\n", numBytesRead)
 	log.Printf("Data read: %s", string(data))
 	return err
+}
+
+func (n *Node) CloseTCPCommand(socketID int) error {
+	if socketID >= len(n.SocketIndexTable) || socketID < 0 {
+		return errors.New("Invalid socket id\n")
+	}
+	socketToClose := n.SocketIndexTable[socketID]
+
+	if socketToClose == nil {
+		return errors.New("Socket does not exist\n")
+	}
+
+	var conn *tcp.VTCPConn
+	if val, ok := socketToClose.(*tcp.VTCPConn); !ok {
+
+		if listenerVal, ok := socketToClose.(*tcp.VTCPListener); ok {
+			n.SocketIndexTable[socketID] = nil
+			return listenerVal.VClose()
+		} else {
+			return errors.New("Socket doesn't have close function")
+		}
+	} else {
+		conn = val
+	}
+
+	n.SocketIndexTable[socketID] = nil
+	err := conn.VClose()
+	return err
+}
+
+func (n *Node) ShutDownTCPCommand(socketID int, option string) error {
+	return nil
+}
+
+func (n *Node) SendFileTCPCommand() error {
+	return nil
+}
+
+func (n *Node) ReadFileTCPCommand() error {
+	return nil
 }
