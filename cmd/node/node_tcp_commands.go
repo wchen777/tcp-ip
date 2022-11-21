@@ -130,6 +130,16 @@ func (n *Node) ReadTCPCommand(socketID int, numBytes uint32, readAll bool) error
 	return err
 }
 
+func (n *Node) HandleDeletion(socketID int, deletionChan chan bool) {
+	for {
+		select {
+		case <-deletionChan:
+			// Only when close returns should we remove it from the socket table
+			n.SocketIndexTable[socketID] = nil
+		}
+	}
+}
+
 func (n *Node) CloseTCPCommand(socketID int) error {
 	if socketID >= len(n.SocketIndexTable) || socketID < 0 {
 		return errors.New("Invalid socket id\n")
@@ -145,7 +155,7 @@ func (n *Node) CloseTCPCommand(socketID int) error {
 
 		if listenerVal, ok := socketToClose.(*tcp.VTCPListener); ok {
 			n.SocketIndexTable[socketID] = nil
-			go listenerVal.VClose()
+			listenerVal.VClose()
 			return nil
 		} else {
 			return errors.New("Socket doesn't have close function")
@@ -154,9 +164,13 @@ func (n *Node) CloseTCPCommand(socketID int) error {
 		conn = val
 	}
 
-	// TODO: where should we set to be nil?
-	n.SocketIndexTable[socketID] = nil
-	go conn.VClose()
+	deletionChan := make(chan bool)
+	go func() {
+		// a goroutine that notifies another goroutine that close has returned
+		conn.VClose()
+		deletionChan <- true
+	}()
+	go n.HandleDeletion(socketID, deletionChan)
 	fmt.Printf("Socket %d has been closed\n", socketID)
 	return nil
 }
@@ -165,6 +179,7 @@ func (n *Node) ShutDownTCPCommand(socketID int, option string) error {
 	if option == "read" || option == "r" {
 		// this just shuts down reading, but we can still write
 		// the socket remains in ESTABLISHED state
+		// maybe we can set some field in here to say that the read operation is invalid
 	} else if option == "write" || option == "w" {
 		// It looks like just a normal CLOSE as defined in the RFC, except we can still read
 	} else if option == "both" {

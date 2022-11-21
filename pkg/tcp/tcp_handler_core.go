@@ -684,7 +684,6 @@ func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 	// STEPS:
 	// send a FIN to receiver
 	tcbEntry := t.SocketTable[vc.SocketTableKey]
-	// TODO: what should the
 	tcbEntry.TCBLock.Lock()
 
 	// According to Ed post, each packet reaching the ESTABLISHED state should have the ACK flag set

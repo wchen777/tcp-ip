@@ -1,10 +1,14 @@
 package tcp
 
+import "go.uber.org/atomic"
+
 // Storing a socket data key so that we can index into the socket table
 // in the handler
 type VTCPConn struct {
-	SocketTableKey SocketData
-	TCPHandler     *TCPHandler
+	SocketTableKey  SocketData
+	TCPHandler      *TCPHandler
+	ListenCancelled *atomic.Bool // TODO: maybe these fields can be set when shutdown/closed are called so we know which API calls cannot be made
+	WriteCancelled  *atomic.Bool
 }
 
 func (vc *VTCPConn) GetType() SocketType {
