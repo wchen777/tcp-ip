@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"tcp-ip/pkg/tcp"
@@ -144,7 +145,8 @@ func (n *Node) CloseTCPCommand(socketID int) error {
 
 		if listenerVal, ok := socketToClose.(*tcp.VTCPListener); ok {
 			n.SocketIndexTable[socketID] = nil
-			return listenerVal.VClose()
+			go listenerVal.VClose()
+			return nil
 		} else {
 			return errors.New("Socket doesn't have close function")
 		}
@@ -152,16 +154,66 @@ func (n *Node) CloseTCPCommand(socketID int) error {
 		conn = val
 	}
 
+	// TODO: where should we set to be nil?
 	n.SocketIndexTable[socketID] = nil
-	err := conn.VClose()
-	return err
-}
-
-func (n *Node) ShutDownTCPCommand(socketID int, option string) error {
+	go conn.VClose()
+	fmt.Printf("Socket %d has been closed\n", socketID)
 	return nil
 }
 
-func (n *Node) SendFileTCPCommand() error {
+func (n *Node) ShutDownTCPCommand(socketID int, option string) error {
+	if option == "read" || option == "r" {
+		// this just shuts down reading, but we can still write
+		// the socket remains in ESTABLISHED state
+	} else if option == "write" || option == "w" {
+		// It looks like just a normal CLOSE as defined in the RFC, except we can still read
+	} else if option == "both" {
+		n.CloseTCPCommand(socketID)
+	} else {
+		return errors.New("Invalid option")
+	}
+	return nil
+}
+
+func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) error {
+	addr := net.ParseIP(ipAddr)
+	if addr == nil {
+		return errors.New("Invalid ip address\n")
+	}
+
+	newConn, err := n.TCPHandler.Connect(addr, port)
+	if err != nil {
+		return err
+	}
+	n.AddToTable(newConn)
+
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Open(filepath)
+	defer f.Close()
+
+	if err != nil {
+		return err
+	}
+
+	// read file until EOF and send each amount that we read
+	// perhaps we can read like a chunk size each time? aka 1024 bytes
+	buf := make([]byte, 1024)
+	for {
+		amountRead, err := f.Read(buf)
+		if amountRead == 0 {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		_, err = newConn.VWrite(buf)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

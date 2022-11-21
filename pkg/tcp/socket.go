@@ -40,6 +40,8 @@ func SocketStateToString(state ConnectionState) string {
 		return "FIN_WAIT_2"
 	case TIME_WAIT:
 		return "TIME_WAIT"
+	case CLOSE_WAIT:
+		return "CLOSE_WAIT"
 	default:
 		return "LAST_ACK"
 	}

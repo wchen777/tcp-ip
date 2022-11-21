@@ -182,7 +182,8 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		case CLOSING:
 		case TIME_WAIT:
 		case CLOSE_WAIT:
-			log.Print("dropping packet because in CLOSE_WAIT")
+			log.Print("received a segment when state is in CLOSE_WAIT")
+			t.Receive(tcpHeader, tcpPayload, &key, tcbEntry)
 			return
 		case LAST_ACK:
 			t.HandleLastAck(tcpHeader, tcbEntry, &key)

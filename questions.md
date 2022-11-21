@@ -54,12 +54,15 @@ Nick's ideas:
 - retransmission queue and timeout
 
 **error conditions to handle**
+- sending data when a socket is closed 
+- handle simulataneous closes 
 - are we handling when we send to/read froma a socket that doesn't exist?
 - calling read on a listener socket 
 - calling accept on a non-listener socket 
 - basically what should happen when the operation isn't supported on a socket 
 
 - is shutdown type 3 just close? 
+- why does close have the socket disappear from the socket table?
 
 - send / rec lock vs TCB lock
   - difficulty is that the sender might need to touch the receive TCB for values, which may cause deadlock if we take a lock on the receiver while they're trying to take a lock for us

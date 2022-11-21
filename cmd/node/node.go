@@ -245,9 +245,17 @@ func (n *Node) REPL() {
 				break
 			}
 		case "sf":
-			if len(commands) != 3 {
+			if len(commands) != 4 {
 				fmt.Printf("Invalid number of arguments for sf\n")
 				break
+			}
+			port, err := strconv.Atoi(commands[3])
+			if err != nil {
+				fmt.Printf("Invalid port number\n")
+			}
+			err = n.SendFileTCPCommand(commands[1], commands[2], uint16(port))
+			if err != nil {
+				fmt.Print(err)
 			}
 		case "rf":
 			if len(commands) != 3 {

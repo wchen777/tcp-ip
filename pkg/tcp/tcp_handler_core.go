@@ -619,7 +619,7 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 	}
 
 	// TODO: add checking for what state the entry is in
-	if tcbEntry.State != ESTABLISHED {
+	if (tcbEntry.State != ESTABLISHED) && (tcbEntry.State != CLOSE_WAIT) {
 		return 0, errors.New("Connection is closing")
 	}
 
@@ -687,8 +687,9 @@ func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 	// TODO: what should the
 	tcbEntry.TCBLock.Lock()
 
+	// According to Ed post, each packet reaching the ESTABLISHED state should have the ACK flag set
 	tcpHeader := CreateTCPHeader(t.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
-		tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagFin, tcbEntry.RCV.WND, []byte{})
+		tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagFin|header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 
 	// prevent any more sending
 	tcbEntry.Cancelled.Store(true)
