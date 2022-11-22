@@ -52,6 +52,7 @@ Nick's ideas:
 - handshake timeout
 - sendfile command 
 - retransmission queue and timeout
+- how do you close the socket in rf? 
 
 **error conditions to handle**
 - sending data when a socket is closed 

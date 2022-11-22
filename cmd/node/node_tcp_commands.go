@@ -196,15 +196,13 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 		return errors.New("Invalid ip address\n")
 	}
 
+	// create a new connection
 	newConn, err := n.TCPHandler.Connect(addr, port)
 	if err != nil {
 		return err
 	}
+	// and add it to the socket table
 	n.AddToTable(newConn)
-
-	if err != nil {
-		return err
-	}
 
 	f, err := os.Open(filepath)
 	defer f.Close()
@@ -232,6 +230,36 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 	return nil
 }
 
-func (n *Node) ReadFileTCPCommand() error {
+func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
+	// start listening on port number that is specified
+	listener, err := n.VListen(port)
+	if err != nil {
+		return err
+	}
+
+	n.AddToTable(listener)
+
+	// a new connection has been established, so we should
+	newConn, err := listener.VAccept()
+
+	// create a buffer to read data into
+	buf := make([]byte, 1024)
+
+	// open the file to write what is read to the file
+	f, err := os.Open(filepath)
+	defer f.Close()
+
+	go func() {
+		for {
+			_, err := newConn.VRead(buf, 1025, false)
+			if err != nil {
+				// TODO: how do we know this has been returned on error
+				newConn.VClose()
+				return
+			}
+			f.Write(buf)
+		}
+	}()
+
 	return nil
 }

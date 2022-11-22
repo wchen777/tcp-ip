@@ -96,6 +96,22 @@ func Min(val1 uint32, val2 uint32) uint32 {
 	}
 }
 
+func Min64f(val1 float64, val2 float64) float64 {
+	if val1 < val2 {
+		return val1
+	} else {
+		return val2
+	}
+}
+
+func Max64f(val1 float64, val2 float64) float64 {
+	if val1 > val2 {
+		return val1
+	} else {
+		return val2
+	}
+}
+
 // extra interface functions
 
 func (t *TCPHandler) AddChanRoutine() {

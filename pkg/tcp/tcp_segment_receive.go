@@ -160,17 +160,69 @@ func (t *TCPHandler) HandleEstablished(tcpHeader header.TCP, tcbEntry *TCB, key 
 
 func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, tcpPayload []byte) {
 	// want to receive an ACK in FIN WAIT 1
+	// TODO: need to handle simultaneous CLOSE, so if we receive a FIN, we need to ACK and change states
+	tcbEntry.TCBLock.Lock()
+	defer tcbEntry.TCBLock.Unlock()
 	if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
-		tcbEntry.TCBLock.Lock()
 		log.Printf("Received ACK Num: %d\n", tcpHeader.AckNumber())
 		log.Printf("NXT number to check: %d\n", tcbEntry.SND.NXT)
 		if tcpHeader.AckNumber() == tcbEntry.SND.NXT { // if the ACK acknowledges our FIN packet, go into FIN WAIT 2
 			log.Print("Updating state to be FIN_WAIT_2")
 			tcbEntry.State = FIN_WAIT_2
 		}
-		tcbEntry.TCBLock.Unlock()
+	} else { // drop packet if no ack
+		return
 	}
-	// t.Receive(tcpHeader, tcpPayload, key, tcbEntry)
+	if (tcpHeader.Flags() & header.TCPFlagFin) != 0 { // if there is a fin... (packet is guaranteed to have ACK here)
+		if tcpHeader.AckNumber() == tcbEntry.SND.NXT-1 { // this checks that our FIN wasn't ACK'd
+			// check to make sure that the ACK is correct
+			// TODO: though this probably was already checked? so confusion
+			tcbEntry.State = CLOSING // the other side did not ACK our FIN, so we need to wait for it
+		} else {
+			tcbEntry.State = TIME_WAIT // the receiver ACK'd our FIN, go straight to TIME WAIT (no more data on either side)
+		}
+		buf := &bytes.Buffer{}
+		binary.Write(buf, binary.BigEndian, key.LocalAddr)
+		binary.Write(buf, binary.BigEndian, key.DestAddr)
+
+		tcbEntry.RCV.NXT += 1 // increment our NXT for the ACK
+
+		tcpHdr := CreateTCPHeader(key.LocalAddr, key.DestAddr, key.LocalPort, key.DestPort,
+			tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
+		bufToSend := buf.Bytes()
+		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, key.DestAddr)...)
+
+		log.Print("Sending ack for FIN: FIN WAIT 1")
+		t.IPLayerChannel <- bufToSend
+
+		if tcbEntry.State == TIME_WAIT { // TIME WAIT has no more data to send, wait to close conn
+			go t.WaitForClosed(tcbEntry, key)
+		}
+		return
+	}
+	// should still receive packets as normal
+	t.Receive(tcpHeader, tcpPayload, key, tcbEntry)
+}
+
+func (t *TCPHandler) WaitForClosed(tcbEntry *TCB, key *SocketData) {
+	// Set a timeout, and once we reach the timeout, then we set the state to be closed
+	// there is a chance however, we might get another FIN and need to reset the timeout
+	timeout := time.After(time.Duration(2 * time.Second * MSL))
+
+	for {
+		select {
+		case <-tcbEntry.ResetWaitChan:
+			// reset the timeout in the event that we get another FIN here
+			timeout = time.After(time.Duration(2 * time.Second * MSL))
+		case <-timeout:
+			// then go into CLOSED and notify the close routine that we have reached close
+			tcbEntry.TCBLock.Lock()
+			tcbEntry.State = CLOSED
+			tcbEntry.ReceiveChan <- *key
+			tcbEntry.TCBLock.Unlock()
+			return
+		}
+	}
 }
 
 func (t *TCPHandler) HandleFinWait2(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, tcpPayload []byte) {
@@ -194,29 +246,54 @@ func (t *TCPHandler) HandleFinWait2(tcpHeader header.TCP, tcbEntry *TCB, key *So
 
 		log.Print("Sending ack for FIN: FIN WAIT 2")
 		t.IPLayerChannel <- bufToSend
-		// Go into TIMEWAIT --> wait 2 * MSL
-		timer := time.NewTicker(2 * time.Second * MSL)
-		for {
-			select {
-			case <-timer.C:
-				// then go into CLOSED and notify the close routine that we have reached close
-				tcbEntry.State = CLOSED
-				tcbEntry.ReceiveChan <- *key
-				tcbEntry.TCBLock.Unlock()
-			}
-		}
+		tcbEntry.ResetWaitChan = make(chan bool)
+		tcbEntry.TCBLock.Unlock()
+
+		// spawn a goroutine that is waiting for the close timer
+		go t.WaitForClosed(tcbEntry, key)
 	} else {
 		// TODO: can you still receive packets in FIN_WAIT_2?
 		t.Receive(tcpHeader, tcpPayload, key, tcbEntry)
 	}
 }
 
-func (t *TCPHandler) HandleClosing(tcpPacket TCPPacket) {
+func (t *TCPHandler) HandleClosing(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData) {
+	tcbEntry.TCBLock.Lock()
+	defer tcbEntry.TCBLock.Unlock()
 
+	if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
+		if tcpHeader.AckNumber() == tcbEntry.SND.NXT {
+			tcbEntry.State = TIME_WAIT
+			go t.WaitForClosed(tcbEntry, key)
+		}
+	}
 }
 
-func (t *TCPHandler) HandleTimeWait(tcpPacket TCPPacket) {
+func (t *TCPHandler) HandleTimeWait(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData) {
 	// TODO: maybe handle when we receive a SYN
+
+	// Handle case when we receive another FIN --> need to reset 2*MSL timeout
+	if (tcpHeader.Flags() & header.TCPFlagFin) != 0 {
+		buf := &bytes.Buffer{}
+		binary.Write(buf, binary.BigEndian, key.LocalAddr)
+		binary.Write(buf, binary.BigEndian, key.DestAddr)
+
+		tcbEntry.TCBLock.Lock()
+		tcbEntry.RCV.NXT += 1 // increment our NXT for the ACK
+
+		tcpHdr := CreateTCPHeader(key.LocalAddr, key.DestAddr, key.LocalPort, key.DestPort,
+			tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
+		bufToSend := buf.Bytes()
+		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, key.DestAddr)...)
+
+		log.Print("Sending ack for FIN: TIME WAIT")
+		t.IPLayerChannel <- bufToSend
+
+		// sending a flag so that we can reset the timeout in the event that we receive another FIN
+		tcbEntry.ResetWaitChan <- true
+
+		tcbEntry.TCBLock.Unlock()
+	}
 }
 
 func (t *TCPHandler) HandleLastAck(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData) {

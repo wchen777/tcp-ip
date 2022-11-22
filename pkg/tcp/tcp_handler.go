@@ -5,6 +5,7 @@ import (
 	"log"
 	"sync"
 	"tcp-ip/pkg/ip"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 	"go.uber.org/atomic"
@@ -73,14 +74,20 @@ type Receive struct {
 }
 
 type TCB struct {
-	ConnectionType int
-	State          ConnectionState
-	ReceiveChan    chan SocketData // some sort of channel when receiving another message on this layer
-	SND            *Send
-	RCV            *Receive
-	TCBLock        sync.Mutex   // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
-	ListenKey      SocketData   // keeps track of the listener to properly notify the listener
-	Cancelled      *atomic.Bool // determines whether or not a user has cancelled sending
+	ConnectionType      int
+	State               ConnectionState
+	ReceiveChan         chan SocketData // some sort of channel when receiving another message on this layer
+	ResetWaitChan       chan bool       // channel to reset the wait during close
+	SND                 *Send
+	RCV                 *Receive
+	TCBLock             sync.Mutex   // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
+	ListenKey           SocketData   // keeps track of the listener to properly notify the listener
+	Cancelled           *atomic.Bool // determines whether or not a user has cancelled sending
+	RTO                 time.Duration
+	SRTT                time.Duration
+	RetransmissionQueue []header.TCPFields
+	SegmentToTimestamp  map[uint32]int64 // maps updated NXT pointer (aka expected ACK for a given segment)
+	RTOTimeoutChan      chan bool
 	// TODO:
 	// pointer to retransmit queue and current segment
 
@@ -180,7 +187,12 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			log.Printf("received a segment when state is in FIN WAIT 2")
 			t.HandleFinWait2(tcpHeader, tcbEntry, &key, tcpPayload)
 		case CLOSING:
+			// TODO: assuming that we can't receive data here?
+			log.Printf("received a segment when state is in CLOSING")
+			t.HandleClosing(tcpHeader, tcbEntry, &key)
 		case TIME_WAIT:
+			log.Printf("received a segment when in TIME WAIT")
+			// TODO: are we still able to receive segments here?
 		case CLOSE_WAIT:
 			log.Print("received a segment when state is in CLOSE_WAIT")
 			t.Receive(tcpHeader, tcpPayload, &key, tcbEntry)

@@ -400,6 +400,9 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 		log.Printf("UNA: %d\n", tcbEntry.SND.UNA)
 		return
 	}
+	// call cacluate SRTT + RTO function
+	t.updateTimeout(tcbEntry, ackNum)
+
 	tcbEntry.SND.WND = uint32(tcpHeader.WindowSize()) // update the advertised window size given this info
 	tcbEntry.SND.UNA = ackNum                         // set the last unacknowledged byte to be what the receiver has yet to acknowledge
 	tcbEntry.SND.WriteBlockedCond.Broadcast()         // broadcast instead since both the writer and sender rely on UNA
@@ -513,11 +516,18 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 					tcbEntry.TCBLock.Unlock()
 					return
 				}
+
+				// add to the end of the retransmission queue
+				tcbEntry.RetransmissionQueue = append(tcbEntry.RetransmissionQueue, tcpHeader)
+
 				t.IPLayerChannel <- bufToSend
 
 				// increment next pointer
 				amountSent += amountToCopy
 				tcbEntry.SND.NXT += amountToCopy
+
+				tcbEntry.SegmentToTimestamp[tcbEntry.SND.NXT] = time.Now().Unix()
+				tcbEntry.RTOTimeoutChan <- true
 			}
 		}
 
