@@ -45,13 +45,26 @@ func (n *Node) StartNode(filepath string) {
 	print out help usage for the node
 */
 func (n *Node) PrintHelp(w io.Writer) {
+	fmt.Fprintf(w, "-------------- \t IP COMMANDS --------------\n")
 	fmt.Fprintf(w, "send <ip> <proto> <string> \t - Sends the string payload to the given ip address with the specified protocol.\n")
 	fmt.Fprintf(w, "down <interface-num> \t - Bring an interface \"down\".\n")
 	fmt.Fprintf(w, "up <interface-num> \t - Bring an interface \"up\".\n")
 	fmt.Fprintf(w, "interfaces, li <file> \t - Print information about each interface, one per line. Optionally specify a destination file.\n")
 	fmt.Fprintf(w, "routes, lr <file>\t - Print information about the route to each known destination, one per line. Optionally specify a destination file.\n")
-	fmt.Fprintf(w, "quit, q \t - Quit this node.\n")
+	fmt.Fprintf(w, "-------------- \t TCP COMMANDS --------------\n")
+	fmt.Fprintf(w, "sockets, ls \t - List all sockets, along with the state the TCP connection associated with them is in, and their window sizes.\n")
+	fmt.Fprintf(w, "a <port> \t - Open a socket, bind it to the given port on any interface, and start accepting connections on that port.\n")
+	fmt.Fprintf(w, "c <ip> <port> \t - Attempt to connect to the given IP address, in dot notation, on the given port.\n")
+	fmt.Fprintf(w, "s <socket ID> <data> \t - Send a string on a socket.\n")
+	fmt.Fprintf(w, "r <socket ID> <numbytes> <y|n> \t - Try to read data from a given socket. y -- block until numbytes is received, n -- return whatever can be read.\n")
+	fmt.Fprintf(w, "sd <socket ID> <read|write|both> \t - Shutdown the given socket. If read is given, close only the reading side. If write is given, close only the writing side.\n")
+	fmt.Fprintf(w, "cl <socket ID> \t - Close the given socket.\n")
+	fmt.Fprintf(w, "sf <filename> <ip> <port> \t - Connect to the given ip and port, send the entirety of the specified file, and close the connection.\n")
+	fmt.Fprintf(w, "rf <filename> <port> \t - Listen for a connection on the given port. Once established, write everything you can read from the socket to the given file. Once the other side closes the connection, close the connection as well.\n")
+	fmt.Fprintf(w, "---------------------------------------------\n")
+	fmt.Fprintf(w, "quit, q \t - Quit this node cleanly.\n")
 	fmt.Fprintf(w, "help, h \t - Show this help.\n")
+
 }
 
 /*
@@ -235,7 +248,7 @@ func (n *Node) REPL() {
 				fmt.Printf("Invalid socket id number: %s\n", commands[1])
 				break
 			}
-			err = n.CloseTCPCommand(socketId)
+			err = n.CloseTCPCommand(socketId, true)
 			if err != nil {
 				fmt.Print(err)
 			}
