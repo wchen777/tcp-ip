@@ -1,6 +1,10 @@
 package tcp
 
-import "go.uber.org/atomic"
+import (
+	"errors"
+
+	"go.uber.org/atomic"
+)
 
 // Storing a socket data key so that we can index into the socket table
 // in the handler
@@ -62,7 +66,18 @@ func (vc *VTCPConn) VWrite(data []byte) (uint32, error) {
  * it reaches the CLOSED state.
  */
 func (vc *VTCPConn) VShutdown(sdType int) error {
-	return vc.TCPHandler.Shutdown(sdType, vc)
+	switch sdType {
+	case 0:
+		vc.ReadCancelled.Store(true)
+		return nil
+	case 1:
+		vc.WriteCancelled.Store(true)
+		return vc.TCPHandler.Close(&vc.SocketTableKey, vc)
+	case 2:
+		return vc.VClose()
+	default:
+		return errors.New("Invalid shutdown type")
+	}
 }
 
 /*
@@ -74,5 +89,7 @@ func (vc *VTCPConn) VShutdown(sdType int) error {
  * reaches the CLOSED state.  For example, after VClose() any data not yet ACKed should still be retransmitted.
  */
 func (vc *VTCPConn) VClose() error {
+	vc.ReadCancelled.Store(true)
+	vc.WriteCancelled.Store(true)
 	return vc.TCPHandler.Close(&vc.SocketTableKey, vc)
 }

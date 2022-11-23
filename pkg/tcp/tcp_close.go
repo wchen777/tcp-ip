@@ -22,9 +22,10 @@ func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 
 	// prevent any more sending
 	tcbEntry.Cancelled.Store(true)
-	// signal potentially blocked send routine
+	// signal potentially blocked send routine to exit
 	tcbEntry.SND.SendBlockedCond.Signal()
-	tcbEntry.SND.WriteBlockedCond.Signal()
+	// signal a potentally blocked write to exit
+	tcbEntry.SND.WriteBlockedCond.Broadcast()
 
 	// send FIN packet
 	buf := &bytes.Buffer{}

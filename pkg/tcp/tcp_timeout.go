@@ -3,6 +3,8 @@ package tcp
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/netstack/tcpip/header"
@@ -14,8 +16,9 @@ import (
 // need to reset retransmit timer on packet send and retransmit packet send
 
 const (
-	ALPHA               = 0.85
-	RTO_UPPER           = time.Duration(time.Second * 60)
+	ALPHA = 0.85
+	// RTO_UPPER           = time.Duration(time.Second * 60)
+	RTO_UPPER           = time.Duration(10 * time.Second)
 	RTO_LOWER           = time.Duration(time.Second)
 	BETA                = 1.5
 	MAX_RETRANSMISSIONS = 3
@@ -78,20 +81,24 @@ func calculateRTO(SRTT time.Duration) time.Duration {
 // goroutine function to check timeout
 // TODO: where should we first call this routine?
 func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
-	timeout := time.After(time.Duration(tcbEntry.RTO * time.Second))
+	timeout := time.After(tcbEntry.RTO)
 	for {
 		select {
 		case <-tcbEntry.RTOTimeoutChan:
+			log.Print("resetting rto timeout")
 			// resetting the timeout in this case, either we have received an ACK or we have sent a new segment
-			timeout = time.After(time.Duration(tcbEntry.RTO * time.Second))
+			timeout = time.After(tcbEntry.RTO)
 		case <-timeout:
 			// use the first element from the retransmission queue and send it to the IP layer
 			// the element should only be removed once we have received an ACK for it
 			// reset the timer when sending
 
 			// only timeout if we have sent something, which means the retransmission queue is non-empty
+			tcbEntry.TCBLock.Lock()
 			if len(tcbEntry.RetransmissionQueue) == 0 {
-				timeout = time.After(time.Duration(tcbEntry.RTO * time.Second))
+				log.Print("retransmission queue empty, resetting timeout")
+				timeout = time.After(tcbEntry.RTO)
+				tcbEntry.TCBLock.Unlock()
 				continue
 			}
 
@@ -99,8 +106,21 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 			if tcbEntry.RetransmitCounter == MAX_RETRANSMISSIONS {
 				// TODO: go directly into CLOSED?
 				// what should be signaled in this case?
+				log.Print("reached max retransmissions for data")
 				tcbEntry.State = CLOSED
+				tcbEntry.TimeoutCancelled.Store(true)
+				// signal variables
+				tcbEntry.SND.WriteBlockedCond.Broadcast()
+				tcbEntry.SND.SendBlockedCond.Signal()
+				tcbEntry.RCV.ReadBlockedCond.Signal()
+				tcbEntry.TCBLock.Unlock()
+
+				// delete entry from socket table
+				delete(t.SocketTable, *socketData)
+				return
 			}
+
+			log.Print("retransmitting data packet")
 
 			retransmitPacket := tcbEntry.RetransmissionQueue[0] // retransmit the first item on the queue
 			tcbEntry.RetransmitCounter++
@@ -127,9 +147,53 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 				copy(payload, tcbEntry.SND.Buffer[seq_num_index:seq_num_index+retransmitPacket.PayloadLen])
 			}
 
+			tcbEntry.RTO *= 2 // exponential backoff
+
+			timeout = time.After(tcbEntry.RTO) // reset the timeout
+
+			// unlock mutex for TCB
+			tcbEntry.TCBLock.Unlock()
+
 			// extend the buffer that we are sending with the payload
 			bufToSend = append(bufToSend, payload...)
 			t.IPLayerChannel <- bufToSend
+		}
+	}
+}
+
+func (t *TCPHandler) WaitForAckReceiver(tcbEntry *TCB, key *SocketData) {
+	timeout := time.After(RTO_UPPER)
+
+	for {
+		select {
+		case <-timeout:
+			// resend the SYN-ACK because we haven't received an ACK yet
+			if tcbEntry.RetransmitCounter == MAX_RETRANSMISSIONS {
+				tcbEntry.State = CLOSED
+				fmt.Println("Handshake timed out")
+				delete(t.SocketTable, *key)
+				return
+			}
+
+			log.Print("retransmitting syn ack")
+			tcbEntry.RetransmitCounter++
+
+			buf := &bytes.Buffer{}
+			binary.Write(buf, binary.BigEndian, key.LocalAddr)
+			binary.Write(buf, binary.BigEndian, key.DestAddr)
+			tcpHeader := CreateTCPHeader(key.LocalAddr, key.DestAddr, key.LocalPort, key.DestPort, tcbEntry.SND.ISS,
+				tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
+			bufToSend := buf.Bytes()
+
+			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, key.DestAddr)...)
+
+			timeout = time.After(RTO_UPPER)
+
+			// send to IP layer
+			t.IPLayerChannel <- bufToSend
+		case <-tcbEntry.RTOTimeoutChan:
+			tcbEntry.RetransmitCounter = 0
+			return
 		}
 	}
 }

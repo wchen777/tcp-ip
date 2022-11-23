@@ -82,7 +82,8 @@ type TCB struct {
 	RCV                 *Receive
 	TCBLock             sync.Mutex   // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
 	ListenKey           SocketData   // keeps track of the listener to properly notify the listener
-	Cancelled           *atomic.Bool // determines whether or not a user has cancelled sending
+	Cancelled           *atomic.Bool // determines whether or not sending has been cancelled either due to timeout or a user's close
+	TimeoutCancelled    *atomic.Bool // determines if the socket's application level functions has been cancelled due to timeout
 	RTO                 time.Duration
 	SRTT                time.Duration
 	RetransmissionQueue []*RetransmitSegment
@@ -154,6 +155,8 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		if _, exists := t.SocketTable[listenerKey]; exists {
 			key = listenerKey
 		}
+	} else {
+		log.Print("already exists??")
 	}
 
 	log.Printf("socket data structure after receiving: %v\n", key)
@@ -174,7 +177,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			t.HandleStateSynSent(tcpHeader, tcbEntry, localAddr, srcPort, destAddr, destPort, &key)
 		case SYN_RECEIVED:
 			log.Printf("received a segment when state is in SYN_RECEIVED")
-			t.HandleStateSynReceived(tcpHeader, tcbEntry, &key)
+			t.HandleStateSynReceived(tcpHeader, tcbEntry, &key, tcpPayload)
 		case ESTABLISHED:
 			log.Printf("received a segment when state is in ESTABLISHED")
 			// call a function or have a function that's always running?
@@ -195,8 +198,8 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			log.Printf("received a segment when in TIME WAIT")
 			t.HandleTimeWait(tcpHeader, tcbEntry, &key)
 		case CLOSE_WAIT:
-			// we cannot receive any packets here, or can we?
-
+			// we cannot receive any packets here, or can we? handling duplicate FIN here.
+			t.HandleCloseWait(tcpHeader, tcbEntry, &key)
 			log.Print("received a segment when state is in CLOSE_WAIT")
 		case LAST_ACK:
 			t.HandleLastAck(tcpHeader, tcbEntry, &key)

@@ -275,6 +275,14 @@ func (n *Node) REPL() {
 				fmt.Printf("Invalid number of arguments for rf\n")
 				break
 			}
+			port, err := strconv.Atoi(commands[2])
+			if err != nil {
+				fmt.Printf("Invalid port number\n")
+			}
+			err = n.ReadFileTCPCommand(commands[1], uint16(port))
+			if err != nil {
+				fmt.Print(err)
+			}
 		default:
 			n.PrintHelp(w)
 			w.Flush()

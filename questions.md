@@ -49,8 +49,6 @@ Nick's ideas:
 - refactor the ACK sending to own function, same thing with the packet sending? (do this later)
 
 **features to implement**
-- handshake timeout
-- shutdown command types 
 - handling when socket is in CLOSED from retransmission
 
 - adding locks when we receive a segment

@@ -44,6 +44,9 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 		SocketTableKey: socketData,
 		TCPHandler:     t,
 	}
+	newConn.ReadCancelled = atomic.NewBool(false)
+	newConn.WriteCancelled = atomic.NewBool(false)
+
 	newTCBEntry := &TCB{
 		State:               SYN_SENT,
 		ReceiveChan:         make(chan SocketData), // some sort of channel when receiving another message on this layer
@@ -56,7 +59,7 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 		SRTT:                -1,
 	}
 	newTCBEntry.Cancelled = atomic.NewBool(false)
-
+	newTCBEntry.TimeoutCancelled = atomic.NewBool(false)
 	newTCBEntry.SND.WriteBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 	newTCBEntry.SND.SendBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 	newTCBEntry.RCV.ReadBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
@@ -82,30 +85,53 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	bufToSend := buf.Bytes()
 
 	bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, destAddr)...)
-	// tcpBytes := make(header.TCP, header.TCPMinimumSize)
-	// tcpBytes.Encode(&tcpHeader)
-
-	// bytesArray := &bytes.Buffer{}
-	// binary.Write(bytesArray, binary.BigEndian, destAddr)
-	// buf := bytesArray.Bytes()
-	// buf = append(buf, tcpBytes...)
 
 	// send to IP layer
 	log.Print("sending tcp to channel")
 	t.IPLayerChannel <- bufToSend
-
-	// TODO: I think we should wait for a channel update here. RFC makes it seems like we should handle state changes on receive
+	timeout := time.After(RTO_UPPER)
 
 	for {
 		select {
-		case err := <-t.IPErrorChannel:
+		case <-timeout:
+			// check how many times SYN has been sent, and if it's been sent numerous times,
+			if newTCBEntry.RetransmitCounter == MAX_RETRANSMISSIONS {
+				log.Print("Connection timed out!")
+				// make socket CLOSED
+				newTCBEntry.State = CLOSED
+
+				// remove ourselves from the socket table
+				delete(t.SocketTable, socketData)
+				return nil, errors.New("Connection timed out")
+			}
+
+			// increment number of times
+			newTCBEntry.RetransmitCounter++
+
+			// resend SYN
+			tcpHeader := CreateTCPHeader(t.LocalAddr, destAddr, socketData.LocalPort, port, newTCBEntry.SND.ISS, 0, header.TCPFlagSyn, MAX_BUF_SIZE, []byte{})
+
+			buf := &bytes.Buffer{}
+			binary.Write(buf, binary.BigEndian, t.LocalAddr)
+			binary.Write(buf, binary.BigEndian, destAddr)
+			bufToSend := buf.Bytes()
+
+			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, destAddr)...)
+
+			// send to IP layer
+			log.Print("sending tcp to channel for timeout")
+			t.IPLayerChannel <- bufToSend
+
+			// reset timeout after sending out packet
+			timeout = time.After(RTO_UPPER)
+		case err := <-t.IPErrorChannel: // propagate error if exists
 			return nil, err
-		case _ = <-newTCBEntry.ReceiveChan:
+		case _ = <-newTCBEntry.ReceiveChan: // handshake complete, reset retransmit counter
+			newTCBEntry.RetransmitCounter = 0
+			// don't need to reset timeout here.
 			return newConn, nil
 		}
 	}
-
-	// return the new VTCPConn object
 }
 
 /*
@@ -164,7 +190,9 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 	if len(listenerTCBEntry.PendingConnections) > 0 {
 		connEntry := listenerTCBEntry.PendingConnections[0]
 		listenerTCBEntry.PendingConnections = listenerTCBEntry.PendingConnections[1:]
-		return &VTCPConn{SocketTableKey: connEntry, TCPHandler: t}, nil
+		return &VTCPConn{SocketTableKey: connEntry, TCPHandler: t,
+			ReadCancelled:  atomic.NewBool(false),
+			WriteCancelled: atomic.NewBool(false)}, nil
 	}
 
 	listenerTCBEntry.PendingConnMutex.Lock()
@@ -178,7 +206,11 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 	connEntry := listenerTCBEntry.PendingConnections[0]
 	listenerTCBEntry.PendingConnections = listenerTCBEntry.PendingConnections[1:]
 	defer listenerTCBEntry.PendingConnMutex.Unlock()
-	return &VTCPConn{SocketTableKey: connEntry, TCPHandler: t}, nil
+
+	return &VTCPConn{SocketTableKey: connEntry,
+		TCPHandler: t, ReadCancelled: atomic.NewBool(false),
+		WriteCancelled: atomic.NewBool(false)}, nil
+
 }
 
 // corresponds to RECEIVE in RFC
@@ -187,7 +219,7 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 	// check if we are in a closing state, if so -> return error
 	if vc.ReadCancelled.Load() {
 		// this should catch when we are in LAST_ACK
-		return 0, errors.New("Operation is not permitted")
+		return 0, errors.New("Read operation is not permitted")
 	}
 
 	// check to see if the connection exists in the table, return error if it doesn't exist
@@ -204,6 +236,11 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 
 	tcbEntry.TCBLock.Lock()
 
+	if tcbEntry.TimeoutCancelled.Load() {
+		tcbEntry.TCBLock.Unlock()
+		return 0, errors.New("Read on timed out connection")
+	}
+
 	// if the other side of the connection has closed (passive close), return EOF on read
 	if tcbEntry.State == CLOSE_WAIT {
 		tcbEntry.TCBLock.Unlock()
@@ -215,7 +252,7 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 		if tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
 			// TODO: is it okay if readAll isn't specified and we return 0 bytes read?
 			// 		 not sure what it means to return with at least 1 byte read
-			if !readAll {
+			if !readAll && amountReadSoFar > 0 {
 				tcbEntry.TCBLock.Unlock()
 				return amountReadSoFar, nil // there's nothing to read, so we just return in the case of a non-blocking read
 			} else {
@@ -223,7 +260,7 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 				for tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
 					log.Print("Blocked because LBR is equal NXT")
 					tcbEntry.RCV.ReadBlockedCond.Wait()
-					if tcbEntry.State == CLOSE_WAIT {
+					if tcbEntry.State == CLOSE_WAIT || tcbEntry.TimeoutCancelled.Load() {
 						tcbEntry.TCBLock.Unlock()
 						return 0, io.EOF
 					}
@@ -458,12 +495,16 @@ func (t *TCPHandler) ReceiveFin(tcpHeader header.TCP, socketData *SocketData, tc
 	// }
 
 	// FIN seq num is up to date with what we expect
+	log.Printf("FIN sequence number: %d\n", tcpHeader.SequenceNumber())
+	log.Printf("Receiving FIN expected NXT: %d\n", tcbEntry.RCV.NXT)
 	if tcpHeader.SequenceNumber() == tcbEntry.RCV.NXT {
+		log.Print("FIN seq num is up to date")
 		tcbEntry.State = CLOSE_WAIT // go into CLOSE WAIT statea (passive close)
 		tcbEntry.RCV.NXT += 1       // increment ACK num for fin
 		// signal a blocking read that the other side has closed the connection
 		tcbEntry.RCV.ReadBlockedCond.Signal()
 	} else if tcpHeader.SequenceNumber() > tcbEntry.RCV.NXT {
+		log.Print("Fin seq num is too advanced")
 		// queue the pending FIN
 		tcbEntry.PendingFin = tcpHeader.SequenceNumber()
 		// in ReceivePacket when we get the data we want
@@ -475,6 +516,7 @@ func (t *TCPHandler) ReceiveFin(tcpHeader header.TCP, socketData *SocketData, tc
 	binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
 	binary.Write(buf, binary.BigEndian, socketData.DestAddr)
 
+	log.Printf("RCV nxt before sending ack for fin: %d\n", tcbEntry.RCV.NXT)
 	tcpHdr := CreateTCPHeader(socketData.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
 		tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 	bufToSend := buf.Bytes()
@@ -671,6 +713,10 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 // corresponds to SEND in RFC
 func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 	// check to see if the connection exists in the table, return error if it doesn't exist
+	if vc.WriteCancelled.Load() {
+		return 0, errors.New("Write operation not permitted")
+	}
+
 	var tcbEntry *TCB
 
 	if val, exists := t.SocketTable[vc.SocketTableKey]; !exists {
@@ -679,9 +725,8 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 		tcbEntry = val
 	}
 
-	// TODO: add checking for what state the entry is in
-	if (tcbEntry.State != ESTABLISHED) && (tcbEntry.State != CLOSE_WAIT) {
-		return 0, errors.New("Connection is closing")
+	if tcbEntry.TimeoutCancelled.Load() {
+		return 0, errors.New("Write on timed out connection")
 	}
 
 	amountToWrite := uint32(len(data))
@@ -692,11 +737,27 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 		log.Printf("amount written: %d\n", amountWritten)
 		tcbEntry.TCBLock.Lock()
 
+		// check for a valid socket state
+		if (tcbEntry.State != ESTABLISHED) && (tcbEntry.State != CLOSE_WAIT) {
+			return 0, errors.New("Connection is closing")
+		}
+
 		// there is no space to write anything, then we should block until we can
 		for tcbEntry.SND.LBW-tcbEntry.SND.UNA == MAX_BUF_SIZE {
 			// This should unblock from receiving ACKs
 			log.Print("Waiting for space to be available in the buffer")
 			tcbEntry.SND.WriteBlockedCond.Wait()
+
+			if vc.WriteCancelled.Load() {
+				tcbEntry.TCBLock.Unlock()
+				return 0, errors.New("Write on a closed socket")
+			}
+
+			if tcbEntry.TimeoutCancelled.Load() {
+				tcbEntry.TCBLock.Unlock()
+				return 0, errors.New("Write on timed out connection")
+			}
+
 		}
 
 		remainingBufSize := MAX_BUF_SIZE - (tcbEntry.SND.LBW - tcbEntry.SND.UNA)

@@ -23,11 +23,17 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 
 		// create a new tcb entry to represent the spawned socket connection
 		newTCBEntry := &TCB{ConnectionType: 0,
-			ReceiveChan: make(chan SocketData),
-			SND:         &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
-			RCV:         &Receive{Buffer: make([]byte, MAX_BUF_SIZE)}}
+			ReceiveChan:         make(chan SocketData),
+			SND:                 &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
+			RCV:                 &Receive{Buffer: make([]byte, MAX_BUF_SIZE)},
+			RetransmissionQueue: make([]*RetransmitSegment, 0),
+			RTOTimeoutChan:      make(chan bool),
+			SegmentToTimestamp:  make(map[uint32]int64),
+			RTO:                 RTO_UPPER,
+			SRTT:                -1,
+		}
 		newTCBEntry.Cancelled = atomic.NewBool(false)
-
+		newTCBEntry.TimeoutCancelled = atomic.NewBool(false)
 		newTCBEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // acknowledge the SYN's seq number (X+1)
 		newTCBEntry.RCV.LBR = newTCBEntry.RCV.NXT
 		newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber() // start our stream at seq number (X)
@@ -58,6 +64,9 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 
 		// send to IP layer
 		t.IPLayerChannel <- bufToSend
+
+		// calling this so that we can receive an ACK after sending SYNACK
+		go t.WaitForAckReceiver(newTCBEntry, &socketData)
 	} else {
 		// in all other cases the packet should be dropped
 		return
@@ -118,13 +127,29 @@ func (t *TCPHandler) HandleStateSynSent(tcpHeader header.TCP, tcbEntry *TCB, loc
 	// TODO: if the length of the payload is greater than 0, we need to do some processing?
 }
 
-func (t *TCPHandler) HandleStateSynReceived(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData) {
+func (t *TCPHandler) HandleStateSynReceived(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, payload []byte) {
+	// we should not be receiving data in the handshake
+	if len(payload) > 0 {
+		return
+	}
+
 	// how to tell if something is a passive open or not?
 	// looking to get an ACK from sender
 	if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // got a SYN while in SYN_RECEIVED, need to check if passive open?
-		if tcbEntry.ConnectionType == 0 {
-			return
-		}
+		// if tcbEntry.ConnectionType == 0 {
+		// 	return
+		// }
+		buf := &bytes.Buffer{}
+		binary.Write(buf, binary.BigEndian, key.LocalAddr)
+		binary.Write(buf, binary.BigEndian, key.DestAddr)
+		tcpHeader := CreateTCPHeader(key.LocalAddr, key.DestAddr, key.LocalPort, key.DestPort, tcbEntry.SND.ISS,
+			tcbEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
+		bufToSend := buf.Bytes()
+
+		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, key.DestAddr)...)
+
+		// send to IP layer
+		t.IPLayerChannel <- bufToSend
 	}
 	if (tcpHeader.Flags() & header.TCPFlagAck) != 0 { // we received an ACK responding to our SYN-ACK
 		// this ACK must acknowledge "new information" and it must be equal to (or less than) the next seq number we are trying to send
@@ -134,6 +159,9 @@ func (t *TCPHandler) HandleStateSynReceived(tcpHeader header.TCP, tcbEntry *TCB,
 			// call asynchronous send routine and pass in tcb entry
 			tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
 			log.Printf("Window size in syn received: %d\n", tcbEntry.SND.WND)
+
+			// signal to goroutine that we have received ACK and can return
+			tcbEntry.RTOTimeoutChan <- true
 
 			go t.Send(key, tcbEntry)        // start goroutine that sends from buffer
 			go t.waitTimeout(tcbEntry, key) // start goroutine to wait for timeouts when packets are sent
@@ -165,16 +193,20 @@ func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *So
 	// want to receive an ACK in FIN WAIT 1
 	// TODO: need to handle simultaneous CLOSE, so if we receive a FIN, we need to ACK and change states
 	tcbEntry.TCBLock.Lock()
-	defer tcbEntry.TCBLock.Unlock()
 
+	log.Print("In FINWAIT 1")
 	if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
 		log.Printf("Received ACK Num: %d\n", tcpHeader.AckNumber())
 		log.Printf("NXT number to check: %d\n", tcbEntry.SND.NXT)
 		if tcpHeader.AckNumber() == tcbEntry.SND.NXT { // if the ACK acknowledges our FIN packet, go into FIN WAIT 2
 			log.Print("Updating state to be FIN_WAIT_2")
 			tcbEntry.State = FIN_WAIT_2
+			tcbEntry.TCBLock.Unlock()
+			return
 		}
 	} else { // drop packet if no ack
+		log.Printf("No ACK")
+		tcbEntry.TCBLock.Unlock()
 		return
 	}
 
@@ -203,8 +235,11 @@ func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *So
 		if tcbEntry.State == TIME_WAIT { // TIME WAIT has no more data to send, wait to close conn
 			go t.WaitForClosed(tcbEntry, key)
 		}
+		tcbEntry.TCBLock.Unlock()
 		return
 	}
+
+	tcbEntry.TCBLock.Unlock()
 	// should still receive packets as normal
 	t.Receive(tcpHeader, tcpPayload, key, tcbEntry)
 }
@@ -258,6 +293,7 @@ func (t *TCPHandler) HandleFinWait2(tcpHeader header.TCP, tcbEntry *TCB, key *So
 		go t.WaitForClosed(tcbEntry, key)
 	} else {
 		// TODO: can you still receive packets in FIN_WAIT_2?
+		log.Print("Received non-fin packet in fin wait 2")
 		t.Receive(tcpHeader, tcpPayload, key, tcbEntry)
 	}
 }

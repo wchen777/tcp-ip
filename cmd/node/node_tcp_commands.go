@@ -65,16 +65,25 @@ func (n *Node) ConnectCommand(destAddr net.IP, port uint16) (int, error) {
 }
 
 func (n *Node) ListSocketCommand(w io.Writer) {
+	toDelete := make([]int, 0)
 	fmt.Fprintf(w, "socket\tlocal-addr\tport\tdst-addr\tport\tstatus\n")
 	for i, socket := range n.SocketIndexTable {
 		if socket == nil {
 			continue
 		}
 		socketData := socket.GetSocketTableKey()
+		if n.TCPHandler.SocketTable[socketData] == nil {
+			toDelete = append(toDelete, i)
+			continue
+		}
 		localAddr := addrNumToIP(socketData.LocalAddr)
 		destAddr := addrNumToIP(socketData.DestAddr)
 		status := tcp.SocketStateToString(n.TCPHandler.SocketTable[socketData].State)
 		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%d\t%s\n", i, localAddr, socketData.LocalPort, destAddr, socketData.DestPort, status)
+	}
+
+	for _, index := range toDelete {
+		n.SocketIndexTable[index] = nil
 	}
 }
 
@@ -166,10 +175,17 @@ func (n *Node) CloseTCPCommand(socketID int, noRead bool) error {
 		conn = val
 	}
 
+	// set flags to block application level operations
+	if noRead {
+		conn.ReadCancelled.Store(true)
+	}
+	conn.WriteCancelled.Store(true)
+
 	deletionChan := make(chan bool)
 	go func() {
 		// a goroutine that notifies another goroutine that close has returned
 		conn.VClose()
+
 		deletionChan <- true
 	}()
 	go n.HandleDeletion(socketID, deletionChan)
@@ -183,23 +199,22 @@ func (n *Node) ShutDownTCPCommand(socketID int, option string) error {
 	}
 
 	socketToShutdown := n.SocketIndexTable[socketID]
-
-	if option == "read" || option == "r" {
-		// this just shuts down reading, but we can still write
-		// the socket remains in ESTABLISHED state
-		// maybe we can set some field in here to say that the read operation is invalid
-		if val, ok := socketToShutdown.(*tcp.VTCPConn); !ok {
-			return errors.New("Cannot shutdown read on listening conn")
-		} else {
-			val.ReadCancelled.Store(true)
-		}
-	} else if option == "write" || option == "w" {
-		// It looks like just a normal CLOSE as defined in the RFC, except we can still read
-		n.CloseTCPCommand(socketID, false)
-	} else if option == "both" {
-		n.CloseTCPCommand(socketID, true)
+	// maybe we can set some field in here to say that the read operation is invalid
+	if val, ok := socketToShutdown.(*tcp.VTCPConn); !ok {
+		return errors.New("Cannot shutdown read on listening conn")
 	} else {
-		return errors.New("Invalid option")
+		if option == "read" || option == "r" {
+			// this just shuts down reading, but we can still write
+			// the socket remains in ESTABLISHED state
+			val.VShutdown(0)
+		} else if option == "write" || option == "w" {
+			// It looks like just a normal CLOSE as defined in the RFC, except we can still read
+			n.CloseTCPCommand(socketID, false) // close just write (still able to read)
+		} else if option == "both" {
+			n.CloseTCPCommand(socketID, true) // close both read and write
+		} else {
+			return errors.New("Invalid option for shutdown")
+		}
 	}
 	return nil
 }
@@ -212,11 +227,12 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 
 	// create a new connection
 	newConn, err := n.TCPHandler.Connect(addr, port)
+	log.Print("returning from connect")
 	if err != nil {
 		return err
 	}
 	// and add it to the socket table
-	n.AddToTable(newConn)
+	socketID := n.AddToTable(newConn)
 
 	f, err := os.Open(filepath)
 	defer f.Close()
@@ -228,8 +244,8 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 	// read file until EOF and send each amount that we read
 	// perhaps we can read like a chunk size each time? aka 1024 bytes
 	// TODO: is it okay to read chunk size?
-	buf := make([]byte, 1024)
 	for {
+		buf := make([]byte, 1024)
 		amountRead, err := f.Read(buf)
 		if amountRead == 0 {
 			break
@@ -237,7 +253,8 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 		if err != nil {
 			return err
 		}
-		_, err = newConn.VWrite(buf)
+		log.Print(buf[:amountRead])
+		_, err = newConn.VWrite(buf[:amountRead])
 		if err != nil {
 			return err
 		}
@@ -245,7 +262,7 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 
 	// close the connection here
 	newConn.VClose()
-
+	n.SocketIndexTable[socketID] = nil
 	return nil
 }
 
@@ -265,19 +282,24 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 	buf := make([]byte, 1024)
 
 	// open the file to write what is read to the file
-	f, err := os.Open(filepath)
-	defer f.Close()
+	f, err := os.Create(filepath)
 
 	go func() {
 		for {
-			_, err := newConn.VRead(buf, 1024, false)
+			numbytes, err := newConn.VRead(buf, 1024, false)
 			if err != nil {
 				// TODO: how do we know this has been returned on error
 				log.Print(err.Error())
 				newConn.VClose()
+				f.Close()
 				return
 			}
-			f.Write(buf)
+			log.Print(buf[:numbytes])
+			_, err = f.Write(buf[:numbytes])
+			if err != nil {
+				log.Print(err)
+				return
+			}
 		}
 	}()
 
