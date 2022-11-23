@@ -113,7 +113,6 @@ func Max64f(val1 float64, val2 float64) float64 {
 }
 
 // extra interface functions
-
 func (t *TCPHandler) AddChanRoutine() {
 	return
 }

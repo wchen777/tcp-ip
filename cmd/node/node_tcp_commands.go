@@ -140,7 +140,9 @@ func (n *Node) HandleDeletion(socketID int, deletionChan chan bool) {
 	}
 }
 
-func (n *Node) CloseTCPCommand(socketID int) error {
+// noRead is true --> cannot write to socket during close
+// noWrite is false --> can still write to socket during close
+func (n *Node) CloseTCPCommand(socketID int, noRead bool) error {
 	if socketID >= len(n.SocketIndexTable) || socketID < 0 {
 		return errors.New("Invalid socket id\n")
 	}
@@ -176,14 +178,26 @@ func (n *Node) CloseTCPCommand(socketID int) error {
 }
 
 func (n *Node) ShutDownTCPCommand(socketID int, option string) error {
+	if socketID < 0 || socketID >= len(n.SocketIndexTable) || n.SocketIndexTable[socketID] == nil {
+		return errors.New("Invalid socket ID")
+	}
+
+	socketToShutdown := n.SocketIndexTable[socketID]
+
 	if option == "read" || option == "r" {
 		// this just shuts down reading, but we can still write
 		// the socket remains in ESTABLISHED state
 		// maybe we can set some field in here to say that the read operation is invalid
+		if val, ok := socketToShutdown.(*tcp.VTCPConn); !ok {
+			return errors.New("Cannot shutdown read on listening conn")
+		} else {
+			val.ReadCancelled.Store(true)
+		}
 	} else if option == "write" || option == "w" {
 		// It looks like just a normal CLOSE as defined in the RFC, except we can still read
+		n.CloseTCPCommand(socketID, false)
 	} else if option == "both" {
-		n.CloseTCPCommand(socketID)
+		n.CloseTCPCommand(socketID, true)
 	} else {
 		return errors.New("Invalid option")
 	}
@@ -213,6 +227,7 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 
 	// read file until EOF and send each amount that we read
 	// perhaps we can read like a chunk size each time? aka 1024 bytes
+	// TODO: is it okay to read chunk size?
 	buf := make([]byte, 1024)
 	for {
 		amountRead, err := f.Read(buf)
@@ -227,6 +242,10 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 			return err
 		}
 	}
+
+	// close the connection here
+	newConn.VClose()
+
 	return nil
 }
 
@@ -251,9 +270,10 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 
 	go func() {
 		for {
-			_, err := newConn.VRead(buf, 1025, false)
+			_, err := newConn.VRead(buf, 1024, false)
 			if err != nil {
 				// TODO: how do we know this has been returned on error
+				log.Print(err.Error())
 				newConn.VClose()
 				return
 			}

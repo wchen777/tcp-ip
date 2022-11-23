@@ -50,20 +50,41 @@ Nick's ideas:
 
 **features to implement**
 - handshake timeout
-- sendfile command 
-- retransmission queue and timeout
-- how do you close the socket in rf? 
+- shutdown command types 
+- handling when socket is in CLOSED from retransmission
+
+- adding locks when we receive a segment
+- early arrivals queue
+
+**untested**
+- retransmission 
+- send file and receive file 
+- shutdown 
+
+questions to ask: 
+- how do you detect when the other side has closed the socket in the read/receive file command?  
+  - When in CLOSE_WAIT, we return from read with io.EOF 
+  - need to keep list of pending FINs and only once we have received all the data can we finally ACK the 
+    FIN and go into CLOSE_WAIT
+- at what states do we stop receiving packets: TIME_WAIT, CLOSE_WAIT
+  - FIN_WAIT_2 still accept packets 
+- when do you reset the timeout? both on sending of a packet and on receive of ACKs? 
+  6298 
+- how should one handle timeout/retransmission for the SYN / SYN-ACK / ACK handshake? 
+  - fixed timeouts for receiving SYNACK --> retransmit SYNs 
+  - in SYN_RECEIVED, fixed timeout 
+  - retransmit upper bound, go into CLOSED state 
+- how do you test simultaneous opens / closes? 
+
 
 **error conditions to handle**
-- sending data when a socket is closed 
-- handle simulataneous closes 
+- sending data when a socket is closed --> should be handled with shutdown 
+- handle simulataneous closes --> done 
 - are we handling when we send to/read froma a socket that doesn't exist?
 - calling read on a listener socket 
 - calling accept on a non-listener socket 
 - basically what should happen when the operation isn't supported on a socket 
 
-- is shutdown type 3 just close? 
-- why does close have the socket disappear from the socket table?
 
 - send / rec lock vs TCB lock
   - difficulty is that the sender might need to touch the receive TCB for values, which may cause deadlock if we take a lock on the receiver while they're trying to take a lock for us

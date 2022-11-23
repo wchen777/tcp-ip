@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -44,10 +45,16 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 		TCPHandler:     t,
 	}
 	newTCBEntry := &TCB{
-		State:       SYN_SENT,
-		ReceiveChan: make(chan SocketData), // some sort of channel when receiving another message on this layer
-		SND:         &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
-		RCV:         &Receive{Buffer: make([]byte, MAX_BUF_SIZE)}}
+		State:               SYN_SENT,
+		ReceiveChan:         make(chan SocketData), // some sort of channel when receiving another message on this layer
+		SND:                 &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
+		RCV:                 &Receive{Buffer: make([]byte, MAX_BUF_SIZE)},
+		RetransmissionQueue: make([]*RetransmitSegment, 0),
+		RTOTimeoutChan:      make(chan bool),
+		SegmentToTimestamp:  make(map[uint32]int64),
+		RTO:                 RTO_UPPER,
+		SRTT:                -1,
+	}
 	newTCBEntry.Cancelled = atomic.NewBool(false)
 
 	newTCBEntry.SND.WriteBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
@@ -176,6 +183,13 @@ func (t *TCPHandler) Accept(vl *VTCPListener) (*VTCPConn, error) {
 
 // corresponds to RECEIVE in RFC
 func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VTCPConn) (uint32, error) {
+
+	// check if we are in a closing state, if so -> return error
+	if vc.ReadCancelled.Load() {
+		// this should catch when we are in LAST_ACK
+		return 0, errors.New("Operation is not permitted")
+	}
+
 	// check to see if the connection exists in the table, return error if it doesn't exist
 	var tcbEntry *TCB
 
@@ -190,6 +204,12 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 
 	tcbEntry.TCBLock.Lock()
 
+	// if the other side of the connection has closed (passive close), return EOF on read
+	if tcbEntry.State == CLOSE_WAIT {
+		tcbEntry.TCBLock.Unlock()
+		return 0, io.EOF
+	}
+
 	for amountReadSoFar < amountToRead {
 
 		if tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
@@ -203,6 +223,10 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 				for tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
 					log.Print("Blocked because LBR is equal NXT")
 					tcbEntry.RCV.ReadBlockedCond.Wait()
+					if tcbEntry.State == CLOSE_WAIT {
+						tcbEntry.TCBLock.Unlock()
+						return 0, io.EOF
+					}
 				}
 			}
 		}
@@ -358,6 +382,13 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 				tcbEntry.RCV.NXT += toCopy
 				tcbEntry.RCV.WND -= toCopy
 			}
+
+			if tcbEntry.RCV.NXT == tcbEntry.PendingFin {
+				// if there's a pending FIN, then we increment RCV.NXT and go into CLOSE_WAIT
+				tcbEntry.RCV.NXT += 1
+				tcbEntry.State = CLOSE_WAIT
+			}
+
 			buf := &bytes.Buffer{}
 			binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
 			binary.Write(buf, binary.BigEndian, socketData.DestAddr)
@@ -374,8 +405,7 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 			//}
 		} else {
 			// or sequence number is greater (but still fits in the window), in which case -> early arrivals queue
-			// TODO:
-
+			// TODO: implement early arrivals
 		}
 		tcbEntry.RCV.ReadBlockedCond.Signal() //  we've read a packet, now we can try and unblock the read
 	}
@@ -403,6 +433,9 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 	// call cacluate SRTT + RTO function
 	t.updateTimeout(tcbEntry, ackNum)
 
+	// remove ACK'ed segment from the queue
+	t.removeFromRetransmissionQueue(tcbEntry, ackNum)
+
 	tcbEntry.SND.WND = uint32(tcpHeader.WindowSize()) // update the advertised window size given this info
 	tcbEntry.SND.UNA = ackNum                         // set the last unacknowledged byte to be what the receiver has yet to acknowledge
 	tcbEntry.SND.WriteBlockedCond.Broadcast()         // broadcast instead since both the writer and sender rely on UNA
@@ -415,21 +448,37 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 // function to handle a FIN packet and going into passive close
 func (t *TCPHandler) ReceiveFin(tcpHeader header.TCP, socketData *SocketData, tcbEntry *TCB) {
 	log.Print("Received FIN packet while in established")
-	tcbEntry.State = CLOSE_WAIT // go into CLOSE WAIT statea (passive close)
-	// send an ACK back
+
+	tcbEntry.TCBLock.Lock()
+	defer tcbEntry.TCBLock.Unlock()
+
+	// check seq num of FIN
+	// if tcpHeader.SequenceNumber() < tcbEntry.RCV.NXT {
+	// 	// FIN is spurious (less than ), drop FIN
+	// }
+
+	// FIN seq num is up to date with what we expect
+	if tcpHeader.SequenceNumber() == tcbEntry.RCV.NXT {
+		tcbEntry.State = CLOSE_WAIT // go into CLOSE WAIT statea (passive close)
+		tcbEntry.RCV.NXT += 1       // increment ACK num for fin
+		// signal a blocking read that the other side has closed the connection
+		tcbEntry.RCV.ReadBlockedCond.Signal()
+	} else if tcpHeader.SequenceNumber() > tcbEntry.RCV.NXT {
+		// queue the pending FIN
+		tcbEntry.PendingFin = tcpHeader.SequenceNumber()
+		// in ReceivePacket when we get the data we want
+		// we will send an ACK back for the FIN and go into CLOSE_WAIT and notify reader
+	}
+
+	// send an ACK back, only if this FIN is up to date with what we expect (RCV.NXT)
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
 	binary.Write(buf, binary.BigEndian, socketData.DestAddr)
-
-	tcbEntry.TCBLock.Lock()
-	// TODO: do we need to increment the ack number here? kind of underspecified
-	tcbEntry.RCV.NXT += 1
 
 	tcpHdr := CreateTCPHeader(socketData.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
 		tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 	bufToSend := buf.Bytes()
 	bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, socketData.DestAddr)...)
-	tcbEntry.TCBLock.Unlock()
 
 	log.Print("Sending ack for FIN")
 	t.IPLayerChannel <- bufToSend
@@ -448,8 +497,6 @@ func (t *TCPHandler) ReceiveFin(tcpHeader header.TCP, socketData *SocketData, tc
 
 // Sequence number should increment depending on the segment size
 func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
-
-	// TODO: while window is 0, zero probe
 
 	// loop condition -> while NXT - UNA < WIN (we keep sending until the window size is reached)
 	for {
@@ -517,8 +564,12 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 					return
 				}
 
-				// add to the end of the retransmission queue
-				tcbEntry.RetransmissionQueue = append(tcbEntry.RetransmissionQueue, tcpHeader)
+				// add segment to the end of the retransmission queue
+				retransmitPacketEntry := &RetransmitSegment{
+					TCPHeader:  &tcpHeader,
+					PayloadLen: uint32(len(payload)),
+				}
+				tcbEntry.RetransmissionQueue = append(tcbEntry.RetransmissionQueue, retransmitPacketEntry)
 
 				t.IPLayerChannel <- bufToSend
 
@@ -681,73 +732,4 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 	}
 
 	return amountToWrite, nil
-}
-
-func (t *TCPHandler) Shutdown(sdType int, vc *VTCPConn) error {
-	// send a FIN
-	return nil
-}
-
-// Both socket types will need a close, so pass in socket instead
-// then we can call getTye to get the exact object
-func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
-	// STEPS:
-	// send a FIN to receiver
-	tcbEntry := t.SocketTable[vc.SocketTableKey]
-	tcbEntry.TCBLock.Lock()
-
-	// According to Ed post, each packet reaching the ESTABLISHED state should have the ACK flag set
-	tcpHeader := CreateTCPHeader(t.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
-		tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagFin|header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
-
-	// prevent any more sending
-	tcbEntry.Cancelled.Store(true)
-	// signal potentially blocked send routine
-	tcbEntry.SND.SendBlockedCond.Signal()
-	tcbEntry.SND.WriteBlockedCond.Signal()
-
-	// send FIN packet
-	buf := &bytes.Buffer{}
-	binary.Write(buf, binary.BigEndian, t.LocalAddr)
-	binary.Write(buf, binary.BigEndian, socketData.DestAddr)
-	bufToSend := buf.Bytes()
-	bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
-
-	t.IPLayerChannel <- bufToSend
-
-	// Go into FIN WAIT 1 if ACTIVE CLOSE, otherwise go into LAST ACK for PASSIVE CLOSE
-	if tcbEntry.State == CLOSE_WAIT {
-		tcbEntry.State = LAST_ACK
-	} else {
-		tcbEntry.State = FIN_WAIT_1
-	}
-
-	tcbEntry.SND.NXT += 1
-	tcbEntry.TCBLock.Unlock()
-
-	for {
-		// wait to get notification that we are in FIN WAIT 2 or in CLOSED
-		// depending on active vs. passive close
-		select {
-		case <-tcbEntry.ReceiveChan:
-			delete(t.SocketTable, *socketData)
-			return nil
-		}
-	}
-}
-
-func (t *TCPHandler) CloseListener(vl *VTCPListener) error {
-	// set the cancelled value for the listener to be true
-	// the accept call will drop the new connection if the cancelled value is true instead of processing it
-	log.Print("cancelling the listener")
-	vl.Cancelled.Store(true)
-
-	// signal the pending conn cond in accept if it is waiting on a new connection
-	t.SocketTable[vl.SocketTableKey].PendingConnMutex.Lock()
-	t.SocketTable[vl.SocketTableKey].PendingConnCond.Signal()
-	t.SocketTable[vl.SocketTableKey].PendingConnMutex.Unlock()
-
-	// delete the listener from the socket table
-	delete(t.SocketTable, vl.SocketTableKey)
-	return nil
 }

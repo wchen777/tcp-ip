@@ -85,12 +85,11 @@ type TCB struct {
 	Cancelled           *atomic.Bool // determines whether or not a user has cancelled sending
 	RTO                 time.Duration
 	SRTT                time.Duration
-	RetransmissionQueue []header.TCPFields
+	RetransmissionQueue []*RetransmitSegment
+	RetransmitCounter   int              // keeps track of the number of times the top element in the queue has been retransmitted
 	SegmentToTimestamp  map[uint32]int64 // maps updated NXT pointer (aka expected ACK for a given segment)
 	RTOTimeoutChan      chan bool
-	// TODO:
-	// pointer to retransmit queue and current segment
-
+	PendingFin          uint32
 	// Pending connections, for when a SYN is sent but the listener is not listening
 	PendingConnCond    sync.Cond
 	PendingConnMutex   sync.Mutex
@@ -188,15 +187,17 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 			t.HandleFinWait2(tcpHeader, tcbEntry, &key, tcpPayload)
 		case CLOSING:
 			// TODO: assuming that we can't receive data here?
+			// CLOSING is for simultaneous closes
 			log.Printf("received a segment when state is in CLOSING")
 			t.HandleClosing(tcpHeader, tcbEntry, &key)
 		case TIME_WAIT:
+			// the only segment we can receive here is a FIN
 			log.Printf("received a segment when in TIME WAIT")
-			// TODO: are we still able to receive segments here?
+			t.HandleTimeWait(tcpHeader, tcbEntry, &key)
 		case CLOSE_WAIT:
+			// we cannot receive any packets here, or can we?
+
 			log.Print("received a segment when state is in CLOSE_WAIT")
-			t.Receive(tcpHeader, tcpPayload, &key, tcbEntry)
-			return
 		case LAST_ACK:
 			t.HandleLastAck(tcpHeader, tcbEntry, &key)
 		}
