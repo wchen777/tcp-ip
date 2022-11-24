@@ -27,7 +27,7 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 			SND:                 &Send{Buffer: make([]byte, MAX_BUF_SIZE)},
 			RCV:                 &Receive{Buffer: make([]byte, MAX_BUF_SIZE)},
 			RetransmissionQueue: make([]*RetransmitSegment, 0),
-			RTOTimeoutChan:      make(chan bool),
+			RTOTimeoutChan:      make(chan bool, 49),
 			SegmentToTimestamp:  make(map[uint32]int64),
 			RTO:                 RTO_UPPER,
 			SRTT:                -1,
@@ -82,6 +82,7 @@ func (t *TCPHandler) HandleStateSynSent(tcpHeader header.TCP, tcbEntry *TCB, loc
 	}
 	if (tcpHeader.Flags() & header.TCPFlagSyn) != 0 { // if syn (still can reach here if ACK is 0)
 		tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // received a new seq number (Y) from SYN-ACK (orSYN) response, set next to Y+1
+		tcbEntry.RCV.LBR = tcbEntry.RCV.NXT
 		tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
 		log.Printf("New window size: %d\n", tcbEntry.SND.WND)
 		tcbEntry.RCV.IRS = tcpHeader.SequenceNumber() // start of client's stream is (Y)

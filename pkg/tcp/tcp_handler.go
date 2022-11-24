@@ -28,10 +28,10 @@ type TCPPacket struct {
 }
 
 const (
-	// MAX_BUF_SIZE = (1 << 16) - 1 // buffer size
-	MAX_BUF_SIZE = 10
-	MSS_DATA     = 1360 // maximum segment size of the data in the packet, 1400 - TCP_HEADER_SIZE - IP_HEADER_SIZE
-	MSL          = 5    // maximum segment lifetime
+	MAX_BUF_SIZE = (1 << 16) - 1 // buffer size
+	// MAX_BUF_SIZE = 10
+	MSS_DATA = 1360 // maximum segment size of the data in the packet, 1400 - TCP_HEADER_SIZE - IP_HEADER_SIZE
+	MSL      = 5    // maximum segment lifetime
 )
 
 // The Send struct and Receive structs will be used to implement sliding window
@@ -155,8 +155,6 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		if _, exists := t.SocketTable[listenerKey]; exists {
 			key = listenerKey
 		}
-	} else {
-		log.Print("already exists??")
 	}
 
 	log.Printf("socket data structure after receiving: %v\n", key)

@@ -134,6 +134,9 @@ func (n *Node) ReadTCPCommand(socketID int, numBytes uint32, readAll bool) error
 
 	data := make([]byte, numBytes)
 	numBytesRead, err := connRead.VRead(data, numBytes, readAll)
+	if err != nil {
+		return err
+	}
 	log.Printf("Number of bytes read: %d\n", numBytesRead)
 	log.Printf("Data read: %s", string(data))
 	return err
@@ -178,14 +181,18 @@ func (n *Node) CloseTCPCommand(socketID int, noRead bool) error {
 	// set flags to block application level operations
 	if noRead {
 		conn.ReadCancelled.Store(true)
+
 	}
 	conn.WriteCancelled.Store(true)
 
 	deletionChan := make(chan bool)
 	go func() {
 		// a goroutine that notifies another goroutine that close has returned
-		conn.VClose()
-
+		if noRead { // if no read is specified, we are closing both ends for this function
+			conn.VClose()
+		} else { // otherwise, close just write (still able to read)
+			conn.VShutdown(1)
+		}
 		deletionChan <- true
 	}()
 	go n.HandleDeletion(socketID, deletionChan)
@@ -253,7 +260,7 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 		if err != nil {
 			return err
 		}
-		log.Print(buf[:amountRead])
+		// log.Print(buf[:amountRead])
 		_, err = newConn.VWrite(buf[:amountRead])
 		if err != nil {
 			return err
@@ -287,6 +294,7 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 	go func() {
 		for {
 			numbytes, err := newConn.VRead(buf, 1024, false)
+			log.Printf("amount read: %d\n", numbytes)
 			if err != nil {
 				// TODO: how do we know this has been returned on error
 				log.Print(err.Error())
@@ -294,7 +302,6 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 				f.Close()
 				return
 			}
-			log.Print(buf[:numbytes])
 			_, err = f.Write(buf[:numbytes])
 			if err != nil {
 				log.Print(err)

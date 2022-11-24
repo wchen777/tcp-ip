@@ -288,6 +288,7 @@ func (h *Host) ReadFromHandler() {
 			var entry *RoutingTableEntry
 
 			if val, exists := h.RoutingTable.Table[destAddr]; !exists {
+				log.Print("better not be here")
 				h.TCPErrorChannel <- errors.New("No route to host")
 				return
 			} else {
@@ -299,6 +300,7 @@ func (h *Host) ReadFromHandler() {
 				packet := h.CreateIPPacket(srcAddr, destAddr, data[2*ADDR_SIZE:], 6, 16)
 				checkSum, err := computeChecksum(packet)
 				if err != nil {
+					log.Printf("error when computing checksum: %s\n", err)
 					h.TCPErrorChannel <- err
 					return
 				}

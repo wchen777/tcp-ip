@@ -49,15 +49,12 @@ Nick's ideas:
 - refactor the ACK sending to own function, same thing with the packet sending? (do this later)
 
 **features to implement**
-- handling when socket is in CLOSED from retransmission
-
 - adding locks when we receive a segment
 - early arrivals queue
 
 **untested**
-- retransmission 
+- retransmission --> partially tested 
 - send file and receive file 
-- shutdown 
 
 questions to ask: 
 - how do you detect when the other side has closed the socket in the read/receive file command?  
