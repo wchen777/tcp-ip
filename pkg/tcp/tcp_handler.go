@@ -74,23 +74,26 @@ type Receive struct {
 }
 
 type TCB struct {
-	ConnectionType      int
-	State               ConnectionState
-	ReceiveChan         chan SocketData // some sort of channel when receiving another message on this layer
-	ResetWaitChan       chan bool       // channel to reset the wait during close
-	SND                 *Send
-	RCV                 *Receive
-	TCBLock             sync.Mutex   // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
-	ListenKey           SocketData   // keeps track of the listener to properly notify the listener
-	Cancelled           *atomic.Bool // determines whether or not sending has been cancelled either due to timeout or a user's close
-	TimeoutCancelled    *atomic.Bool // determines if the socket's application level functions has been cancelled due to timeout
-	RTO                 time.Duration
-	SRTT                time.Duration
-	RetransmissionQueue []*RetransmitSegment
-	RetransmitCounter   int              // keeps track of the number of times the top element in the queue has been retransmitted
-	SegmentToTimestamp  map[uint32]int64 // maps updated NXT pointer (aka expected ACK for a given segment)
-	RTOTimeoutChan      chan bool
-	PendingFin          uint32
+	ConnectionType        int
+	State                 ConnectionState
+	ReceiveChan           chan SocketData // some sort of channel when receiving another message on this layer
+	ResetWaitChan         chan bool       // channel to reset the wait during close
+	SND                   *Send
+	RCV                   *Receive
+	TCBLock               sync.Mutex   // TODO: figure out if this is necessary, is it possible that two different goroutines could be using the state variable for instance?
+	ListenKey             SocketData   // keeps track of the listener to properly notify the listener
+	Cancelled             *atomic.Bool // determines whether or not sending has been cancelled either due to timeout or a user's close
+	TimeoutCancelled      *atomic.Bool // determines if the socket's application level functions has been cancelled due to timeout
+	RTO                   time.Duration
+	SRTT                  time.Duration
+	RetransmissionQueue   []*RetransmitSegment
+	RetransmitCounter     int              // keeps track of the number of times the top element in the queue has been retransmitted
+	SegmentToTimestamp    map[uint32]int64 // maps updated NXT pointer (aka expected ACK for a given segment)
+	RTOTimeoutChan        chan bool
+	PendingReceivedFin    uint32
+	PendingSendingFin     *atomic.Bool
+	PendingSendingFinCond sync.Cond
+	EarlyArrivalQueue     *EarlyArrivalQueue // for early arrivals, have an early arrival queue
 	// Pending connections, for when a SYN is sent but the listener is not listening
 	PendingConnCond    sync.Cond
 	PendingConnMutex   sync.Mutex

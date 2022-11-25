@@ -12,6 +12,7 @@ import (
 	"tcp-ip/pkg/tcp"
 )
 
+// Open a socket, bind it to the given port on any interface, and start accepting connections on that port.
 func (n *Node) AcceptCommand(port uint16) error {
 	listener, err := n.VListen(port)
 	n.AddToTable(listener)
@@ -22,6 +23,7 @@ func (n *Node) AcceptCommand(port uint16) error {
 	return nil
 }
 
+// helper function for accept to add a returned socket to the socket index table
 func (n *Node) AddToTable(socket tcp.Socket) int {
 	for i, socket := range n.SocketIndexTable {
 		if socket == nil {
@@ -33,6 +35,7 @@ func (n *Node) AddToTable(socket tcp.Socket) int {
 	return len(n.SocketIndexTable) - 1
 }
 
+// listens for an individual connection
 func (n *Node) acceptHelper(listener *tcp.VTCPListener) {
 	for {
 		// once accept returns, create a new entry in socket index table
@@ -54,6 +57,7 @@ func (n *Node) acceptHelper(listener *tcp.VTCPListener) {
 	}
 }
 
+// Attempt to connect to the given IP address, in dot notation, on the given port. Example: c 10.13.15.24 1056
 func (n *Node) ConnectCommand(destAddr net.IP, port uint16) (int, error) {
 	newConn, err := n.TCPHandler.Connect(destAddr, port)
 
@@ -87,6 +91,7 @@ func (n *Node) ListSocketCommand(w io.Writer) {
 	}
 }
 
+// Send a string on a socket. This should block.
 func (n *Node) SendTCPCommand(line string) error {
 
 	args := strings.SplitN(line, " ", 3)
@@ -115,6 +120,9 @@ func (n *Node) SendTCPCommand(line string) error {
 	return err
 }
 
+// Try to read data from a given socket.
+// If the last argument is y, then you should block until numbytes is received, or the connection closes.
+// If n, then do not block and read whatever is in the socket
 func (n *Node) ReadTCPCommand(socketID int, numBytes uint32, readAll bool) error {
 	if socketID >= len(n.SocketIndexTable) {
 		return errors.New("Invalid socket id\n")
@@ -200,6 +208,9 @@ func (n *Node) CloseTCPCommand(socketID int, noRead bool) error {
 	return nil
 }
 
+// VShutdown on the given socket. If read or r is given, close only the reading side.
+// If write or w is given, close only the writing side.
+// If both is given, close both sides. Default is write.
 func (n *Node) ShutDownTCPCommand(socketID int, option string) error {
 	if socketID < 0 || socketID >= len(n.SocketIndexTable) || n.SocketIndexTable[socketID] == nil {
 		return errors.New("Invalid socket ID")
@@ -226,6 +237,7 @@ func (n *Node) ShutDownTCPCommand(socketID int, option string) error {
 	return nil
 }
 
+// Connect to the given ip and port, send the entirety of the specified file, and close the connection.
 func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) error {
 	addr := net.ParseIP(ipAddr)
 	if addr == nil {
@@ -273,6 +285,9 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 	return nil
 }
 
+// Listen for a connection on the given port.
+// Once established, write everything you can read from the socket to the given file.
+// Once the other side closes the connection, close the connection as well.
 func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 	// start listening on port number that is specified
 	listener, err := n.VListen(port)

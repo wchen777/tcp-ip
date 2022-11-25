@@ -16,6 +16,15 @@ func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 	tcbEntry := t.SocketTable[vc.SocketTableKey]
 	tcbEntry.TCBLock.Lock()
 
+	log.Print("reached close!!")
+	tcbEntry.PendingSendingFin.Store(true) // "enqueue" a fin to be sent
+
+	for tcbEntry.SND.NXT != tcbEntry.SND.LBW {
+		// block here until all data has been sent and then send the FIN
+		log.Print("blocking for close fin until all data has been sent")
+		tcbEntry.PendingSendingFinCond.Wait()
+	}
+
 	// According to Ed post, each packet reaching the ESTABLISHED state should have the ACK flag set
 	tcpHeader := CreateTCPHeader(t.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
 		tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagFin|header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})

@@ -50,7 +50,6 @@ Nick's ideas:
 
 **features to implement**
 - adding locks when we receive a segment
-- early arrivals queue
 
 **untested**
 - retransmission --> partially tested 

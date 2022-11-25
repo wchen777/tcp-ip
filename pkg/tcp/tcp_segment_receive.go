@@ -49,6 +49,12 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 		newTCBEntry.SND.SendBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 		newTCBEntry.RCV.ReadBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
 		newTCBEntry.SND.ZeroBlockedCond = *sync.NewCond(&newTCBEntry.TCBLock)
+		newTCBEntry.EarlyArrivalQueue = &EarlyArrivalQueue{}
+		newTCBEntry.EarlyArrivalQueue.Init()
+
+		newTCBEntry.PendingSendingFin = atomic.NewBool(false)
+		newTCBEntry.PendingSendingFinCond = *sync.NewCond(&newTCBEntry.TCBLock)
+
 		log.Printf("adding this socket data for new entry: %v\n", socketData)
 		t.SocketTable[socketData] = newTCBEntry
 

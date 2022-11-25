@@ -280,7 +280,7 @@ func (n *Node) REPL() {
 			}
 			err = n.SendFileTCPCommand(commands[1], commands[2], uint16(port))
 			if err != nil {
-				fmt.Print(err)
+				fmt.Print(err.Error())
 			}
 		case "rf":
 			if len(commands) != 3 {
@@ -293,7 +293,7 @@ func (n *Node) REPL() {
 			}
 			err = n.ReadFileTCPCommand(commands[1], uint16(port))
 			if err != nil {
-				fmt.Print(err)
+				fmt.Print(err.Error())
 			}
 		default:
 			n.PrintHelp(w)
