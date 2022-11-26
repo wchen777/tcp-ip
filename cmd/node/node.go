@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -117,12 +118,12 @@ func (n *Node) REPL() {
 			break
 		case "down":
 			if len(commands) < 2 {
-				fmt.Print("Invalid number of arguments for down")
+				fmt.Println("Invalid number of arguments for down")
 				break
 			}
 			ifNum, err := strconv.Atoi(commands[1])
 			if err != nil {
-				fmt.Print("Invalid input for interface number")
+				fmt.Println("Invalid input for interface number")
 				break
 			}
 			err = n.Host.DownInterface(ifNum)
@@ -132,12 +133,12 @@ func (n *Node) REPL() {
 			}
 		case "up":
 			if len(commands) < 2 {
-				fmt.Print("Invalid number of arguments for up")
+				fmt.Println("Invalid number of arguments for up")
 				break
 			}
 			ifNum, err := strconv.Atoi(commands[1])
 			if err != nil {
-				fmt.Print("Invalid input for interface number")
+				fmt.Println("Invalid input for interface number")
 				break
 			}
 
@@ -149,26 +150,26 @@ func (n *Node) REPL() {
 
 		case "send":
 			if len(commands) < 4 {
-				fmt.Print("Invalid number of arguments for send")
+				fmt.Println("Invalid number of arguments for send")
 				break
 			}
 			n.SendCommand(line)
 			break
 		case "q":
 			if len(commands) != 1 {
-				fmt.Print("Invalid number of arguments for q")
+				fmt.Println("Invalid number of arguments for q")
 				break
 			}
 			n.Quit()
 		case "traceroute":
 			if len(commands) != 2 {
-				fmt.Print("Invalid number of arguments for traceroute")
+				fmt.Println("Invalid number of arguments for traceroute")
 				break
 			}
 			n.Traceroute(commands[1])
 		case "a":
 			if len(commands) != 2 {
-				fmt.Print("Invalid number of arguments for <a>ccept")
+				fmt.Println("Invalid number of arguments for <a>ccept")
 			}
 			port, err := strconv.Atoi(commands[1])
 			if err != nil {
@@ -180,7 +181,7 @@ func (n *Node) REPL() {
 			}
 		case "c":
 			if len(commands) != 3 {
-				fmt.Print("Invalid number of arguments for <c>onnect")
+				fmt.Println("Invalid number of arguments for <c>onnect")
 				break
 			}
 			ipAddr := net.ParseIP(commands[1])
@@ -197,14 +198,14 @@ func (n *Node) REPL() {
 			fmt.Printf("v_connect() returned %d\n", socketNum)
 		case "ls":
 			if len(commands) != 1 {
-				fmt.Print("Invalid number of arguments for ls")
+				fmt.Println("Invalid number of arguments for ls")
 				break
 			}
 			n.ListSocketCommand(w)
 			w.Flush()
 		case "sockets":
 			if len(commands) != 1 {
-				fmt.Print("Invalid number of arguments for ls")
+				fmt.Println("Invalid number of arguments for ls")
 				break
 			}
 			n.ListSocketCommand(w)
@@ -239,7 +240,7 @@ func (n *Node) REPL() {
 				break
 			}
 			if err != nil {
-				fmt.Print(err)
+				fmt.Println(err.Error())
 			}
 		case "cl":
 			if len(commands) != 2 {
@@ -253,7 +254,7 @@ func (n *Node) REPL() {
 			}
 			err = n.CloseTCPCommand(socketId, true)
 			if err != nil {
-				fmt.Print(err)
+				fmt.Println(err.Error())
 			}
 		case "sd":
 			if len(commands) != 3 {
@@ -267,7 +268,7 @@ func (n *Node) REPL() {
 			}
 			err = n.ShutDownTCPCommand(socketId, commands[2])
 			if err != nil {
-				fmt.Print(err)
+				fmt.Println(err.Error())
 			}
 		case "sf":
 			if len(commands) != 4 {
@@ -280,7 +281,7 @@ func (n *Node) REPL() {
 			}
 			err = n.SendFileTCPCommand(commands[1], commands[2], uint16(port))
 			if err != nil {
-				fmt.Print(err.Error())
+				fmt.Println(err.Error())
 			}
 		case "rf":
 			if len(commands) != 3 {
@@ -293,7 +294,7 @@ func (n *Node) REPL() {
 			}
 			err = n.ReadFileTCPCommand(commands[1], uint16(port))
 			if err != nil {
-				fmt.Print(err.Error())
+				fmt.Println(err.Error())
 			}
 		default:
 			n.PrintHelp(w)
@@ -313,6 +314,7 @@ func main() {
 		log.Fatal("Usage: ./node <path to .lnx>")
 	}
 
+	log.SetOutput(ioutil.Discard)
 	filepath := args[1]
 	node := Node{}
 	node.StartNode(filepath)

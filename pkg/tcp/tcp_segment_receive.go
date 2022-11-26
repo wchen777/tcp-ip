@@ -209,6 +209,9 @@ func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *So
 			log.Print("Updating state to be FIN_WAIT_2")
 			tcbEntry.State = FIN_WAIT_2
 			tcbEntry.TCBLock.Unlock()
+			// processing packet as normal here because the receiver could be
+			// sending an ACK for data long with the ACK for FIN
+			t.Receive(tcpHeader, tcpPayload, key, tcbEntry)
 			return
 		}
 	} else { // drop packet if no ack
