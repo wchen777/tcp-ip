@@ -21,7 +21,7 @@ const (
 	RTO_UPPER           = time.Duration(10 * time.Second)
 	RTO_LOWER           = time.Duration(1 * time.Millisecond)
 	BETA                = 1.5
-	MAX_RETRANSMISSIONS = 3
+	MAX_RETRANSMISSIONS = 5
 )
 
 type RetransmitSegment struct {
@@ -163,8 +163,6 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 			tcbEntry.RTO *= 2 // exponential backoff
 			log.Printf("reset value: %d\n", tcbEntry.RTO)
 
-			timeout = time.After(tcbEntry.RTO) // reset the timeout
-
 			// unlock mutex for TCB
 			tcbEntry.TCBLock.Unlock()
 
@@ -172,6 +170,8 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 			bufToSend = append(bufToSend, payload...)
 			t.IPLayerChannel <- bufToSend
 			log.Print("returning after sending to ip layer")
+
+			timeout = time.After(tcbEntry.RTO) // reset the timeout
 		}
 	}
 }

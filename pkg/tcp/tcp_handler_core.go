@@ -477,8 +477,9 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 				tcbEntry.SND.NXT, nextToSend, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 			bufToSend := buf.Bytes()
 			bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
-			log.Print("Sending ack!")
+
 			t.IPLayerChannel <- bufToSend
+			log.Print("Sending ack!")
 
 			tcbEntry.RCV.ReadBlockedCond.Signal() //  we've read a packet, now we can try and unblock the read
 			//}
