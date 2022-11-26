@@ -83,7 +83,7 @@ func calculateSRTT(SRTTlast time.Duration, RTT int64) time.Duration {
 
 // calculate RTO function (RTO should be equal to the RTO upper bound before the first packet is sent)
 func calculateRTO(SRTT time.Duration) time.Duration {
-	return time.Duration(int64(Min64f(RTO_UPPER.Seconds(), Max64f(BETA*SRTT.Seconds(), RTO_LOWER.Seconds()))) * int64(time.Second))
+	return time.Duration(int64(Min64f(float64(RTO_UPPER), Max64f(BETA*float64(SRTT), float64(RTO_LOWER)))))
 }
 
 // goroutine function to check timeout
