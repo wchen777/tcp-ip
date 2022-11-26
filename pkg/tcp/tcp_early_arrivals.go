@@ -54,7 +54,7 @@ func (eq *EarlyArrivalQueue) Push(newEntry EarlyArrivalEntry) {
 	insertIndex := -1
 	// find position where the starting sequence number of the entry to push is less than the sequence number of the entry after it
 	for i, earlyArrivalEntry := range eq.EarlyArrivals {
-		if startingSeqNum <= earlyArrivalEntry.SequenceNum+earlyArrivalEntry.PayloadLen {
+		if startingSeqNum+newEntry.PayloadLen <= earlyArrivalEntry.SequenceNum {
 			insertIndex = i
 		}
 	}

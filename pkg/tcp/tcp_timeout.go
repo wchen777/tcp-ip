@@ -19,7 +19,7 @@ const (
 	ALPHA = 0.85
 	// RTO_UPPER           = time.Duration(time.Second * 60)
 	RTO_UPPER           = time.Duration(10 * time.Second)
-	RTO_LOWER           = time.Duration(time.Second)
+	RTO_LOWER           = time.Duration(1 * time.Millisecond)
 	BETA                = 1.5
 	MAX_RETRANSMISSIONS = 3
 )
@@ -161,6 +161,7 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 			}
 
 			tcbEntry.RTO *= 2 // exponential backoff
+			log.Printf("reset value: %d\n", tcbEntry.RTO)
 
 			timeout = time.After(tcbEntry.RTO) // reset the timeout
 

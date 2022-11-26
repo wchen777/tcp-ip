@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -314,7 +313,7 @@ func main() {
 		log.Fatal("Usage: ./node <path to .lnx>")
 	}
 
-	log.SetOutput(ioutil.Discard)
+	// log.SetOutput(ioutil.Discard)
 	filepath := args[1]
 	node := Node{}
 	node.StartNode(filepath)

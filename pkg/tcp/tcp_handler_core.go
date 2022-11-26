@@ -820,6 +820,7 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 
 		// check for a valid socket state
 		if (tcbEntry.State != ESTABLISHED) && (tcbEntry.State != CLOSE_WAIT) {
+			log.Printf("tcbEntry state: %s\n", SocketStateToString(tcbEntry.State))
 			return 0, errors.New("Connection is closing")
 		}
 
