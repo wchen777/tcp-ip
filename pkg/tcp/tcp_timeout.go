@@ -18,7 +18,7 @@ import (
 const (
 	ALPHA = 0.85
 	// RTO_UPPER           = time.Duration(time.Second * 60)
-	RTO_UPPER           = time.Duration(10 * time.Second)
+	RTO_UPPER           = time.Duration(1 * time.Second)
 	RTO_LOWER           = time.Duration(1 * time.Millisecond)
 	BETA                = 1.5
 	MAX_RETRANSMISSIONS = 5
@@ -36,7 +36,7 @@ func (t *TCPHandler) removeFromRetransmissionQueue(tcbEntry *TCB, ackNum uint32)
 	index_to_remove := -1
 	for i, retransmitHeader := range tcbEntry.RetransmissionQueue {
 		if retransmitHeader.TCPHeader.SeqNum < ackNum {
-			log.Printf("seq num that is less than ackNum: %d\n", retransmitHeader.TCPHeader.SeqNum)
+			// log.Printf("seq num that is less than ackNum: %d\n", retransmitHeader.TCPHeader.SeqNum)
 			index_to_remove = i
 		} else {
 			// if it's greater than or equal to, then we break
@@ -45,21 +45,32 @@ func (t *TCPHandler) removeFromRetransmissionQueue(tcbEntry *TCB, ackNum uint32)
 	}
 	// TODO: index_to_remove shouldn't be negative here
 	if index_to_remove > -1 {
-		log.Printf("index to remove for retransmission queue: %d\n", index_to_remove)
+		// log.Printf("index to remove for retransmission queue: %d\n", index_to_remove)
 		tcbEntry.RetransmissionQueue = tcbEntry.RetransmissionQueue[index_to_remove+1:]
 		tcbEntry.RetransmitCounter = 0 // reset retransmission counter
 	}
 }
 
-// on packet receive, used the updated
+// on packet receive, used the updated time to calculate a new RTO
+// assumes TCP lock is held coming into the function
 func (t *TCPHandler) updateTimeout(tcbEntry *TCB, segmentReceivedNum uint32) {
-	// assume TCB is locked here, and will exit with it locked.
+	tcbEntry.TCBLock.Lock()
 
-	RTT := time.Now().Unix() - tcbEntry.SegmentToTimestamp[segmentReceivedNum] // round-trip time
+	// RTT := time.Now().UnixNano() - tcbEntry.SegmentToTimestamp[segmentReceivedNum] // round-trip time
+	RTT := time.Duration(time.Now().UnixNano() - tcbEntry.SegmentToTimestamp[segmentReceivedNum]) // round-trip time
+
+	// once we calculate RTT, we can evict it from the map
+	delete(tcbEntry.SegmentToTimestamp, segmentReceivedNum)
+
+	tcbEntry.TCBLock.Unlock()
+
+	// RTT = time.Duration(0)
+
+	log.Printf("RTT calculated: %d\n", RTT)
 
 	if tcbEntry.SRTT == -1 {
 		// on initial packet send, we do not have a previous SRTT value, so use curr measured RTT for this case
-		SRTT := calculateSRTT(time.Duration(RTT), RTT) // smoothed round-trip time
+		SRTT := calculateSRTT(RTT, RTT) // smoothed round-trip time
 		tcbEntry.SRTT = SRTT
 	} else {
 		// otherwise, calculate SRTT with last SRTT and measured RTT
@@ -67,18 +78,22 @@ func (t *TCPHandler) updateTimeout(tcbEntry *TCB, segmentReceivedNum uint32) {
 		tcbEntry.SRTT = SRTT
 	}
 
+	log.Printf("SRTT: %d\n", tcbEntry.SRTT)
+
 	RTO := calculateRTO(tcbEntry.SRTT) // use SRTT to calc retransmission timeout (in time.duration)
 	tcbEntry.RTO = RTO
 
-	log.Printf("retransmit counter: %d\n", tcbEntry.RetransmitCounter)
+	// log.Printf("retransmit counter: %d\n", tcbEntry.RetransmitCounter)
 	tcbEntry.RTOTimeoutChan <- true
 
-	log.Print("reached end of update timeout")
+	// log.Print("reached end of update timeout")
+
 }
 
 // calculate SRTT function (SRTT should be equal to RTT on first packet sent)
-func calculateSRTT(SRTTlast time.Duration, RTT int64) time.Duration {
-	return time.Duration(int64((SRTTlast.Seconds()*ALPHA)+(float64(RTT)*(1-ALPHA))) * int64(time.Second))
+// RTT and SRTT passed in as time.Duration (nanosecond count)
+func calculateSRTT(SRTTlast time.Duration, RTT time.Duration) time.Duration {
+	return time.Duration(int64((float64(SRTTlast) * ALPHA) + (float64(RTT) * (1 - ALPHA))))
 }
 
 // calculate RTO function (RTO should be equal to the RTO upper bound before the first packet is sent)
@@ -93,7 +108,7 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 	for {
 		select {
 		case <-tcbEntry.RTOTimeoutChan:
-			log.Print("resetting rto timeout")
+			// log.Print("resetting rto timeout")
 			// resetting the timeout in this case, either we have received an ACK or we have sent a new segment
 			timeout = time.After(tcbEntry.RTO)
 		case <-timeout:
@@ -104,7 +119,7 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 			// only timeout if we have sent something, which means the retransmission queue is non-empty
 			tcbEntry.TCBLock.Lock()
 			if tcbEntry.State == TIME_WAIT {
-				log.Print("exiting timeout due to time wait reached")
+				// log.Print("exiting timeout due to time wait reached")
 				tcbEntry.TCBLock.Unlock()
 				return
 			}
@@ -120,7 +135,7 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 			if tcbEntry.RetransmitCounter == MAX_RETRANSMISSIONS {
 				// TODO: go directly into CLOSED?
 				// what should be signaled in this case?
-				log.Print("reached max retransmissions for data")
+				// log.Print("reached max retransmissions for data")
 				tcbEntry.State = CLOSED
 				tcbEntry.TimeoutCancelled.Store(true)
 				// signal variables
@@ -134,7 +149,7 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 				return
 			}
 
-			log.Print("retransmitting data packet")
+			// log.Print("retransmitting data packet")
 			retransmitPacket := tcbEntry.RetransmissionQueue[0] // retransmit the first item on the queue
 			tcbEntry.RetransmitCounter++
 
@@ -160,8 +175,9 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 				copy(payload, tcbEntry.SND.Buffer[seq_num_index:seq_num_index+retransmitPacket.PayloadLen])
 			}
 
+			tcbEntry.SegmentToTimestamp[seq_num_index+retransmitPacket.PayloadLen] = time.Now().UnixNano()
 			tcbEntry.RTO *= 2 // exponential backoff
-			log.Printf("reset value: %d\n", tcbEntry.RTO)
+			// log.Printf("reset value: %d\n", tcbEntry.RTO)
 
 			// unlock mutex for TCB
 			tcbEntry.TCBLock.Unlock()
@@ -169,7 +185,7 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 			// extend the buffer that we are sending with the payload
 			bufToSend = append(bufToSend, payload...)
 			t.IPLayerChannel <- bufToSend
-			log.Print("returning after sending to ip layer")
+			// log.Print("returning after sending to ip layer")
 
 			timeout = time.After(tcbEntry.RTO) // reset the timeout
 		}
@@ -190,7 +206,7 @@ func (t *TCPHandler) WaitForAckReceiver(tcbEntry *TCB, key *SocketData) {
 				return
 			}
 
-			log.Print("retransmitting syn ack")
+			// log.Print("retransmitting syn ack")
 			tcbEntry.RetransmitCounter++
 
 			buf := &bytes.Buffer{}

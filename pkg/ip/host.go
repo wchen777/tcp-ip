@@ -281,9 +281,9 @@ func (h *Host) ReadFromHandler() {
 
 			// TODO: make sure that the first four bytes will be the address
 			srcAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
-			log.Printf("source address received: %d\n", srcAddr)
+			// log.Printf("source address received: %d\n", srcAddr)
 			destAddr := binary.BigEndian.Uint32(data[ADDR_SIZE : 2*ADDR_SIZE])
-			log.Printf("destination address recevied: %d\n", destAddr)
+			// log.Printf("destination address recevied: %d\n", destAddr)
 
 			var entry *RoutingTableEntry
 

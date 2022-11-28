@@ -1,7 +1,5 @@
 package tcp
 
-import "log"
-
 type EarlyArrivalEntry struct {
 	SequenceNum uint32
 	PayloadLen  uint32
@@ -49,7 +47,7 @@ func (eq *EarlyArrivalQueue) Pop() EarlyArrivalEntry {
 // add an element to the heap
 func (eq *EarlyArrivalQueue) Push(newEntry EarlyArrivalEntry) {
 	// iterate through early arrivals queue
-	log.Print("PUSHING ELEMENT TO EARLY ARRIVAL QUEUE")
+	// log.Print("PUSHING ELEMENT TO EARLY ARRIVAL QUEUE")
 	startingSeqNum := newEntry.SequenceNum
 	insertIndex := -1
 	// find position where the starting sequence number of the entry to push is less than the sequence number of the entry after it
@@ -68,7 +66,7 @@ func (eq *EarlyArrivalQueue) Push(newEntry EarlyArrivalEntry) {
 		// append at the end (means we did not find an entry that was less than ours at the list)
 		eq.EarlyArrivals = append(eq.EarlyArrivals, newEntry)
 	}
-	log.Printf("last element: %d\n", newEntry.SequenceNum)
+	// log.Printf("last element: %d\n", newEntry.SequenceNum)
 }
 
 // pass in the value of RCV.NXT after receiving the in-order packet and copying data into buffer
@@ -82,6 +80,6 @@ func (t *TCPHandler) updateAckNum(tcbEntry *TCB, nextAck uint32) uint32 {
 		popped := tcbEntry.EarlyArrivalQueue.Pop()
 		entryNum = popped.SequenceNum + popped.PayloadLen // update "next ack num" if found contiguous segment
 	}
-	log.Printf("updated ACK num: %d\n, in-order ACK num: %d\n", entryNum, nextAck)
+	// log.Printf("updated ACK num: %d\n, in-order ACK num: %d\n", entryNum, nextAck)
 	return entryNum
 }

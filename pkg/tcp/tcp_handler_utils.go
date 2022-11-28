@@ -2,7 +2,6 @@ package tcp
 
 import (
 	"encoding/binary"
-	"log"
 	"math/rand"
 
 	"github.com/google/netstack/tcpip/header"
@@ -68,7 +67,7 @@ func CreateTCPHeader(srcAddr uint32, destAddr uint32, srcPort uint16, dstPort ui
 		UrgentPointer: 0,
 	}
 	checkSum := ComputeTCPChecksum(&tcpHdr, srcAddr, destAddr, payload)
-	log.Printf("computed checksum: %d\n", checkSum)
+	// log.Printf("computed checksum: %d\n", checkSum)
 	tcpHdr.Checksum = checkSum
 	return tcpHdr
 }

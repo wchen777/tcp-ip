@@ -38,7 +38,7 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 		newTCBEntry.RCV.LBR = newTCBEntry.RCV.NXT
 		newTCBEntry.RCV.IRS = tcpHeader.SequenceNumber() // start our stream at seq number (X)
 		newTCBEntry.RCV.WND = MAX_BUF_SIZE
-		log.Printf("window size before sending data back: %d\n", newTCBEntry.RCV.WND)
+		// log.Printf("window size before sending data back: %d\n", newTCBEntry.RCV.WND)
 		newTCBEntry.SND.ISS = NewISS()                // start with random ISS for our SYN (= Y)
 		newTCBEntry.SND.NXT = newTCBEntry.SND.ISS + 1 // next to send is (Y+1)
 		newTCBEntry.SND.UNA = newTCBEntry.SND.ISS     // waiting for acknowledgement of (Y)
@@ -55,7 +55,7 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 		newTCBEntry.PendingSendingFin = atomic.NewBool(false)
 		newTCBEntry.PendingSendingFinCond = *sync.NewCond(&newTCBEntry.TCBLock)
 
-		log.Printf("adding this socket data for new entry: %v\n", socketData)
+		// log.Printf("adding this socket data for new entry: %v\n", socketData)
 		t.SocketTable[socketData] = newTCBEntry
 
 		// send SYN-ACK
@@ -65,7 +65,7 @@ func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, s
 		tcpHeader := CreateTCPHeader(localAddr, destAddr, socketData.LocalPort, destPort, newTCBEntry.SND.ISS,
 			newTCBEntry.RCV.NXT, header.TCPFlagSyn|header.TCPFlagAck, newTCBEntry.RCV.WND, []byte{})
 		bufToSend := buf.Bytes()
-		log.Printf("bytes to send: %v\n", bufToSend)
+		// log.Printf("bytes to send: %v\n", bufToSend)
 		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, destAddr)...)
 
 		// send to IP layer
@@ -90,12 +90,12 @@ func (t *TCPHandler) HandleStateSynSent(tcpHeader header.TCP, tcbEntry *TCB, loc
 		tcbEntry.RCV.NXT = tcpHeader.SequenceNumber() + 1 // received a new seq number (Y) from SYN-ACK (orSYN) response, set next to Y+1
 		tcbEntry.RCV.LBR = tcbEntry.RCV.NXT
 		tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
-		log.Printf("New window size: %d\n", tcbEntry.SND.WND)
+		// log.Printf("New window size: %d\n", tcbEntry.SND.WND)
 		tcbEntry.RCV.IRS = tcpHeader.SequenceNumber() // start of client's stream is (Y)
 		tcbEntry.SND.UNA = tcpHeader.AckNumber()      // the X we sent in SYN is ACK'd, set unACK'd to X++1
 
 		if tcbEntry.SND.UNA > tcbEntry.SND.ISS {
-			log.Print("reached point of being established")
+			// log.Print("reached point of being established")
 			tcbEntry.State = ESTABLISHED
 			// call the asynchronous send routine passing in the tcb entry that should be sending data
 
@@ -165,7 +165,7 @@ func (t *TCPHandler) HandleStateSynReceived(tcpHeader header.TCP, tcbEntry *TCB,
 
 			// call asynchronous send routine and pass in tcb entry
 			tcbEntry.SND.WND = uint32(tcpHeader.WindowSize())
-			log.Printf("Window size in syn received: %d\n", tcbEntry.SND.WND)
+			// log.Printf("Window size in syn received: %d\n", tcbEntry.SND.WND)
 
 			// signal to goroutine that we have received ACK and can return
 			tcbEntry.RTOTimeoutChan <- true
@@ -201,12 +201,12 @@ func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *So
 	// TODO: need to handle simultaneous CLOSE, so if we receive a FIN, we need to ACK and change states
 	tcbEntry.TCBLock.Lock()
 
-	log.Print("In FINWAIT 1")
+	// log.Print("In FINWAIT 1")
 	if (tcpHeader.Flags() & header.TCPFlagAck) != 0 {
-		log.Printf("Received ACK Num: %d\n", tcpHeader.AckNumber())
-		log.Printf("NXT number to check: %d\n", tcbEntry.SND.NXT)
+		// log.Printf("Received ACK Num: %d\n", tcpHeader.AckNumber())
+		// log.Printf("NXT number to check: %d\n", tcbEntry.SND.NXT)
 		if tcpHeader.AckNumber() == tcbEntry.SND.NXT { // if the ACK acknowledges our FIN packet, go into FIN WAIT 2
-			log.Print("Updating state to be FIN_WAIT_2")
+			// log.Print("Updating state to be FIN_WAIT_2")
 			tcbEntry.State = FIN_WAIT_2
 			tcbEntry.TCBLock.Unlock()
 			// processing packet as normal here because the receiver could be
@@ -215,7 +215,7 @@ func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *So
 			return
 		}
 	} else { // drop packet if no ack
-		log.Printf("No ACK")
+		// log.Printf("No ACK")
 		tcbEntry.TCBLock.Unlock()
 		return
 	}
@@ -239,7 +239,7 @@ func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *So
 		bufToSend := buf.Bytes()
 		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, key.DestAddr)...)
 
-		log.Print("Sending ack for FIN: FIN WAIT 1")
+		// log.Print("Sending ack for FIN: FIN WAIT 1")
 		t.IPLayerChannel <- bufToSend
 
 		if tcbEntry.State == TIME_WAIT { // TIME WAIT has no more data to send, wait to close conn
@@ -294,7 +294,7 @@ func (t *TCPHandler) HandleFinWait2(tcpHeader header.TCP, tcbEntry *TCB, key *So
 		bufToSend := buf.Bytes()
 		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, key.DestAddr)...)
 
-		log.Print("Sending ack for FIN: FIN WAIT 2")
+		// log.Print("Sending ack for FIN: FIN WAIT 2")
 		t.IPLayerChannel <- bufToSend
 		tcbEntry.ResetWaitChan = make(chan bool)
 		tcbEntry.TCBLock.Unlock()
@@ -303,7 +303,7 @@ func (t *TCPHandler) HandleFinWait2(tcpHeader header.TCP, tcbEntry *TCB, key *So
 		go t.WaitForClosed(tcbEntry, key)
 	} else {
 		// TODO: can you still receive packets in FIN_WAIT_2?
-		log.Print("Received non-fin packet in fin wait 2")
+		// log.Print("Received non-fin packet in fin wait 2")
 		t.Receive(tcpHeader, tcpPayload, key, tcbEntry)
 	}
 }
@@ -337,7 +337,7 @@ func (t *TCPHandler) HandleTimeWait(tcpHeader header.TCP, tcbEntry *TCB, key *So
 		bufToSend := buf.Bytes()
 		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, key.DestAddr)...)
 
-		log.Print("Sending ack for FIN: TIME WAIT")
+		// log.Print("Sending ack for FIN: TIME WAIT")
 		t.IPLayerChannel <- bufToSend
 
 		// sending a flag so that we can reset the timeout in the event that we receive another FIN
@@ -362,7 +362,7 @@ func (t *TCPHandler) HandleCloseWait(tcpHeader header.TCP, tcbEntry *TCB, key *S
 		bufToSend := buf.Bytes()
 		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, key.DestAddr)...)
 
-		log.Print("Sending ack for old FIN: CLOSE WAIT")
+		// log.Print("Sending ack for old FIN: CLOSE WAIT")
 		t.IPLayerChannel <- bufToSend
 
 		tcbEntry.TCBLock.Unlock()

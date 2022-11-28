@@ -121,7 +121,7 @@ type TCPHandler struct {
 */
 func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	// extract the header from the data portion of the IP packet
-	log.Print("Received TCP packet")
+	// log.Print("Received TCP packet")
 	tcpData := packet.Data
 	tcpHeaderAndData := tcpData[0:]
 	tcpHeader := header.TCP(tcpHeaderAndData)
@@ -160,7 +160,7 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		}
 	}
 
-	log.Printf("socket data structure after receiving: %v\n", key)
+	// log.Printf("socket data structure after receiving: %v\n", key)
 	if tcbEntry, exists := t.SocketTable[key]; exists {
 		// connection exists
 		// TODO: call appropriate function for each state
@@ -168,40 +168,40 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		// This is implemented from Section 3.10
 		switch tcbEntry.State {
 		case CLOSED:
-			log.Printf("received a segment when state is CLOSED")
+			// log.Printf("received a segment when state is CLOSED")
 			return
 		case LISTEN:
-			log.Printf("received a segment when state is in LISTEN")
+			// log.Printf("received a segment when state is in LISTEN")
 			t.HandleStateListen(tcpHeader, localAddr, srcPort, destAddr, destPort, &key)
 		case SYN_SENT: // looking to get a SYN ACK to acknowledge our SYN and try and SYN with us
-			log.Printf("received a segment when state is in SYN_SENT")
+			// log.Printf("received a segment when state is in SYN_SENT")
 			t.HandleStateSynSent(tcpHeader, tcbEntry, localAddr, srcPort, destAddr, destPort, &key)
 		case SYN_RECEIVED:
-			log.Printf("received a segment when state is in SYN_RECEIVED")
+			// log.Printf("received a segment when state is in SYN_RECEIVED")
 			t.HandleStateSynReceived(tcpHeader, tcbEntry, &key, tcpPayload)
 		case ESTABLISHED:
-			log.Printf("received a segment when state is in ESTABLISHED")
+			// log.Printf("received a segment when state is in ESTABLISHED")
 			// call a function or have a function that's always running?
 			t.HandleEstablished(tcpHeader, tcbEntry, &key, tcpPayload)
 		case FIN_WAIT_1:
-			log.Print("received a segment when state is in FIN_WAIT_1")
+			// log.Print("received a segment when state is in FIN_WAIT_1")
 			t.HandleFinWait1(tcpHeader, tcbEntry, &key, tcpPayload)
 		case FIN_WAIT_2:
-			log.Printf("received a segment when state is in FIN WAIT 2")
+			// log.Printf("received a segment when state is in FIN WAIT 2")
 			t.HandleFinWait2(tcpHeader, tcbEntry, &key, tcpPayload)
 		case CLOSING:
 			// TODO: assuming that we can't receive data here?
 			// CLOSING is for simultaneous closes
-			log.Printf("received a segment when state is in CLOSING")
+			// log.Printf("received a segment when state is in CLOSING")
 			t.HandleClosing(tcpHeader, tcbEntry, &key)
 		case TIME_WAIT:
 			// the only segment we can receive here is a FIN
-			log.Printf("received a segment when in TIME WAIT")
+			// log.Printf("received a segment when in TIME WAIT")
 			t.HandleTimeWait(tcpHeader, tcbEntry, &key)
 		case CLOSE_WAIT:
 			// we cannot receive any packets here, or can we? handling duplicate FIN here.
 			t.HandleCloseWait(tcpHeader, tcbEntry, &key)
-			log.Print("received a segment when state is in CLOSE_WAIT")
+			// log.Print("received a segment when state is in CLOSE_WAIT")
 		case LAST_ACK:
 			t.HandleLastAck(tcpHeader, tcbEntry, &key)
 		}

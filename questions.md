@@ -22,6 +22,10 @@ Window vs. buffer terminology
   - UNA, NXT should be in terms of sequence number of buffer indicies? For example if you have UNA at 20, does that mean it's 20+ISS or 20+(MAX_BUF*n)+ISS? 
   - Or should we keep track of where the bounds of the buffer are relative to the ISS? But how do we handle wrapping around? Or are the bounds of the buffer shifting rather than wrapping around?
 
+**Current problem:** 
+- Receiver is very slow at sending ACK's which artificially inflates the SRTT value, thus the amount of time it takes for packets to be retrasmitted, which then causes transmission of a large file to be super slow 
+- if we force our RTO to be very small (always the minimum value), many packets are retransmitted as the receiver cannot ACK them in time, which lets a file to be transmitted quicker as we are bombarding the receiver with packets, but it increases the likelihood of max retransmissions being reached and the connection being timed out inconsistently
+
 Our problem:
 - UNA and NXT are in terms of buffer (for send)
   - i.e. buffer in sequence number address space starts at ISS, but UNA starts at 0 
