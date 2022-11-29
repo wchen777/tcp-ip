@@ -1,3 +1,35 @@
+# TCP 
+
+## API Design Choices
+### What happens when a packet is received 
+-- Floria 
+
+### VTCPConn
+-- Floria 
+
+### VTCPListener
+-- Floria 
+
+## Sender
+-- Floria 
+
+### Write call
+
+## Receiver
+-- Will
+
+### Early Arrivals 
+-- Will
+
+## Connection Teardown 
+-- Floria 
+
+## Handling Timeout/Retransmissions
+-- Will
+
+## Congestion Control 
+-- Floria 
+
 # IP
 
 ## Abstraction between link layer and its interfaces
