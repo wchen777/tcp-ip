@@ -264,8 +264,9 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 			} else {
 				// wait until we can get more data to read until amountToRead
 				for tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
-					// log.Print("Blocked because LBR is equal NXT")
+					log.Print("Blocked because LBR is equal NXT")
 					tcbEntry.RCV.ReadBlockedCond.Wait()
+					log.Print("Unblocked here")
 					if tcbEntry.RCV.LBR == tcbEntry.RCV.NXT && (tcbEntry.State == CLOSE_WAIT || tcbEntry.TimeoutCancelled.Load()) {
 						tcbEntry.TCBLock.Unlock()
 						return 0, io.EOF
@@ -284,6 +285,7 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 			bytesToRead = leftToReadBuf
 		}
 
+		tcbEntry.TCBLock.Unlock()
 		// LBR relative to the buffer indices
 		lbr_index := SequenceToBufferInd(tcbEntry.RCV.LBR)
 
@@ -312,6 +314,7 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 		tcbEntry.RCV.WND += bytesToRead
 		// log.Printf("Window after reading: %d\n", tcbEntry.RCV.WND)
 		amountReadSoFar += bytesToRead
+		tcbEntry.TCBLock.Lock()
 	}
 
 	tcbEntry.TCBLock.Unlock()
@@ -450,6 +453,7 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 				tcbEntry.RCV.WND -= tcbEntry.RCV.NXT - previousRCVNXT
 			} else {
 				// if we are receiving an early arrival packet, we should add it to the queue
+				// log.Printf("Received early arrival: %d, payload length: %d\n", seqNumReceived, uint32(len(payload)))
 				earlyArrivalEntry := EarlyArrivalEntry{SequenceNum: seqNumReceived, PayloadLen: uint32(len(payload))}
 				tcbEntry.EarlyArrivalQueue.Push(earlyArrivalEntry)
 			}

@@ -1,5 +1,7 @@
 package tcp
 
+import "log"
+
 type EarlyArrivalEntry struct {
 	SequenceNum uint32
 	PayloadLen  uint32
@@ -54,19 +56,23 @@ func (eq *EarlyArrivalQueue) Push(newEntry EarlyArrivalEntry) {
 	for i, earlyArrivalEntry := range eq.EarlyArrivals {
 		if startingSeqNum+newEntry.PayloadLen <= earlyArrivalEntry.SequenceNum {
 			insertIndex = i
+			break
 		}
 	}
 	if insertIndex != -1 {
-		rest := eq.EarlyArrivals[insertIndex:]      // start of list to where to insert
-		beginning := eq.EarlyArrivals[:insertIndex] // end of list (after insert location)
-		eq.EarlyArrivals = beginning
-		eq.EarlyArrivals = append(eq.EarlyArrivals, newEntry) // append new entry
-		eq.EarlyArrivals = append(eq.EarlyArrivals, rest...)  // rest of the list
+		// rest := eq.EarlyArrivals[insertIndex:]      // start of list to where to insert
+		// beginning := eq.EarlyArrivals[:insertIndex] // end of list (after insert location)
+		// eq.EarlyArrivals = beginning
+		// eq.EarlyArrivals = append(eq.EarlyArrivals, newEntry) // append new entry
+		// log.Print("updated early arrivals after appending: %v\n", eq.EarlyArrivals)
+		// eq.EarlyArrivals = append(eq.EarlyArrivals, rest...) // rest of the list
+		// log.Print("updated early arrivals: %v\n", eq.EarlyArrivals)
+		eq.EarlyArrivals = append(eq.EarlyArrivals[:insertIndex+1], eq.EarlyArrivals[insertIndex:]...)
+		eq.EarlyArrivals[insertIndex] = newEntry
 	} else {
 		// append at the end (means we did not find an entry that was less than ours at the list)
 		eq.EarlyArrivals = append(eq.EarlyArrivals, newEntry)
 	}
-	// log.Printf("last element: %d\n", newEntry.SequenceNum)
 }
 
 // pass in the value of RCV.NXT after receiving the in-order packet and copying data into buffer
@@ -76,6 +82,7 @@ func (eq *EarlyArrivalQueue) Push(newEntry EarlyArrivalEntry) {
 func (t *TCPHandler) updateAckNum(tcbEntry *TCB, nextAck uint32) uint32 {
 
 	entryNum := nextAck // the "next ack num"
+	log.Print("Early arrival queue: %v\n", tcbEntry.EarlyArrivalQueue.EarlyArrivals)
 	for !tcbEntry.EarlyArrivalQueue.IsEmpty() && entryNum == tcbEntry.EarlyArrivalQueue.Peek().SequenceNum {
 		popped := tcbEntry.EarlyArrivalQueue.Pop()
 		entryNum = popped.SequenceNum + popped.PayloadLen // update "next ack num" if found contiguous segment

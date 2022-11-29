@@ -57,6 +57,10 @@ func (t *TCPHandler) updateTimeout(tcbEntry *TCB, segmentReceivedNum uint32) {
 	tcbEntry.TCBLock.Lock()
 
 	// RTT := time.Now().UnixNano() - tcbEntry.SegmentToTimestamp[segmentReceivedNum] // round-trip time
+	if _, exists := tcbEntry.SegmentToTimestamp[segmentReceivedNum]; !exists {
+		tcbEntry.TCBLock.Unlock()
+		return
+	}
 	RTT := time.Duration(time.Now().UnixNano() - tcbEntry.SegmentToTimestamp[segmentReceivedNum]) // round-trip time
 
 	// once we calculate RTT, we can evict it from the map
@@ -82,6 +86,8 @@ func (t *TCPHandler) updateTimeout(tcbEntry *TCB, segmentReceivedNum uint32) {
 
 	RTO := calculateRTO(tcbEntry.SRTT) // use SRTT to calc retransmission timeout (in time.duration)
 	tcbEntry.RTO = RTO
+
+	log.Printf("RTO: %d\n", tcbEntry.RTO)
 
 	// log.Printf("retransmit counter: %d\n", tcbEntry.RetransmitCounter)
 	tcbEntry.RTOTimeoutChan <- true

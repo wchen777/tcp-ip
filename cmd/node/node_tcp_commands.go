@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"tcp-ip/pkg/tcp"
+	"time"
 )
 
 // Open a socket, bind it to the given port on any interface, and start accepting connections on that port.
@@ -301,14 +302,14 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 	newConn, err := listener.VAccept()
 
 	// create a buffer to read data into
-	buf := make([]byte, 1024)
+	buf := make([]byte, 4096)
 
 	// open the file to write what is read to the file
 	f, err := os.Create(filepath)
 
 	go func() {
 		for {
-			numbytes, err := newConn.VRead(buf, 1024, false)
+			numbytes, err := newConn.VRead(buf, 4096, false)
 			log.Printf("amount read: %d\n", numbytes)
 			if err != nil {
 				// TODO: how do we know this has been returned on error
@@ -322,6 +323,8 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 				log.Print(err)
 				return
 			}
+
+			time.Sleep(10 * time.Millisecond)
 		}
 	}()
 
