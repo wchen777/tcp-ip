@@ -56,11 +56,11 @@ func (t *TCPHandler) removeFromRetransmissionQueue(tcbEntry *TCB, ackNum uint32)
 func (t *TCPHandler) updateTimeout(tcbEntry *TCB, segmentReceivedNum uint32) {
 	tcbEntry.TCBLock.Lock()
 
-	// RTT := time.Now().UnixNano() - tcbEntry.SegmentToTimestamp[segmentReceivedNum] // round-trip time
-	if _, exists := tcbEntry.SegmentToTimestamp[segmentReceivedNum]; !exists {
+	if _, exists := tcbEntry.SegmentToTimestamp[segmentReceivedNum]; !exists { // ensure that the seq num is in the map
 		tcbEntry.TCBLock.Unlock()
 		return
 	}
+
 	RTT := time.Duration(time.Now().UnixNano() - tcbEntry.SegmentToTimestamp[segmentReceivedNum]) // round-trip time
 
 	// once we calculate RTT, we can evict it from the map
@@ -68,9 +68,7 @@ func (t *TCPHandler) updateTimeout(tcbEntry *TCB, segmentReceivedNum uint32) {
 
 	tcbEntry.TCBLock.Unlock()
 
-	// RTT = time.Duration(0)
-
-	log.Printf("RTT calculated: %d\n", RTT)
+	// log.Printf("RTT calculated: %d\n", RTT)
 
 	if tcbEntry.SRTT == -1 {
 		// on initial packet send, we do not have a previous SRTT value, so use curr measured RTT for this case
@@ -86,8 +84,6 @@ func (t *TCPHandler) updateTimeout(tcbEntry *TCB, segmentReceivedNum uint32) {
 
 	RTO := calculateRTO(tcbEntry.SRTT) // use SRTT to calc retransmission timeout (in time.duration)
 	tcbEntry.RTO = RTO
-
-	log.Printf("RTO: %d\n", tcbEntry.RTO)
 
 	// log.Printf("retransmit counter: %d\n", tcbEntry.RetransmitCounter)
 	tcbEntry.RTOTimeoutChan <- true

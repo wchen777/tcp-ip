@@ -1,7 +1,5 @@
 package tcp
 
-import "log"
-
 type EarlyArrivalEntry struct {
 	SequenceNum uint32
 	PayloadLen  uint32
@@ -82,7 +80,7 @@ func (eq *EarlyArrivalQueue) Push(newEntry EarlyArrivalEntry) {
 func (t *TCPHandler) updateAckNum(tcbEntry *TCB, nextAck uint32) uint32 {
 
 	entryNum := nextAck // the "next ack num"
-	log.Print("Early arrival queue: %v\n", tcbEntry.EarlyArrivalQueue.EarlyArrivals)
+	// log.Print("Early arrival queue: %v\n", tcbEntry.EarlyArrivalQueue.EarlyArrivals)
 	for !tcbEntry.EarlyArrivalQueue.IsEmpty() && entryNum == tcbEntry.EarlyArrivalQueue.Peek().SequenceNum {
 		popped := tcbEntry.EarlyArrivalQueue.Pop()
 		entryNum = popped.SequenceNum + popped.PayloadLen // update "next ack num" if found contiguous segment

@@ -245,6 +245,12 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 		return errors.New("Invalid ip address\n")
 	}
 
+	f, err := os.Open(filepath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
 	// create a new connection
 	newConn, err := n.TCPHandler.Connect(addr, port)
 	log.Print("returning from connect")
@@ -254,16 +260,10 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 	// and add it to the socket table
 	socketID := n.AddToTable(newConn)
 
-	f, err := os.Open(filepath)
-	defer f.Close()
-
-	if err != nil {
-		return err
-	}
-
 	// read file until EOF and send each amount that we read
 	// perhaps we can read like a chunk size each time? aka 1024 bytes
 	// TODO: is it okay to read chunk size?
+	bytesWritten := uint32(0)
 	for {
 		buf := make([]byte, 1024)
 		amountRead, err := f.Read(buf)
@@ -273,16 +273,18 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 		if err != nil {
 			return err
 		}
-		// log.Print(buf[:amountRead])
-		_, err = newConn.VWrite(buf[:amountRead])
+		numBytesWritten, err := newConn.VWrite(buf[:amountRead])
 		if err != nil {
 			return err
 		}
+		bytesWritten += numBytesWritten
 	}
+	fmt.Printf("Total bytes written: %d\n", bytesWritten)
 
 	// close the connection here
 	newConn.VClose()
 	n.SocketIndexTable[socketID] = nil
+
 	return nil
 }
 
@@ -308,17 +310,22 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 	f, err := os.Create(filepath)
 
 	go func() {
+		bytesReadTotal := uint32(0)
 		for {
 			numbytes, err := newConn.VRead(buf, 4096, false)
-			log.Printf("amount read: %d\n", numbytes)
+			// log.Printf("amount read: %d\n", numbytes)
 			if err != nil {
 				// TODO: how do we know this has been returned on error
 				log.Print(err.Error())
 				newConn.VClose()
 				f.Close()
+				fmt.Printf("Total bytes read: %d\n", bytesReadTotal)
 				return
 			}
 			_, err = f.Write(buf[:numbytes])
+
+			bytesReadTotal += numbytes
+
 			if err != nil {
 				log.Print(err)
 				return
