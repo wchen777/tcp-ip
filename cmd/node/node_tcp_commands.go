@@ -146,8 +146,8 @@ func (n *Node) ReadTCPCommand(socketID int, numBytes uint32, readAll bool) error
 	if err != nil {
 		return err
 	}
-	log.Printf("Number of bytes read: %d\n", numBytesRead)
-	log.Printf("Data read: %s", string(data))
+	fmt.Printf("Number of bytes read: %d\n", numBytesRead)
+	fmt.Printf("Data read: %s", string(data))
 	return err
 }
 
@@ -303,6 +303,9 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 	// a new connection has been established, so we should
 	newConn, err := listener.VAccept()
 
+	// adding the new connection to the table
+	n.AddToTable(newConn)
+
 	// create a buffer to read data into
 	buf := make([]byte, 4096)
 
@@ -315,17 +318,17 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 			numbytes, err := newConn.VRead(buf, 4096, false)
 			// log.Printf("amount read: %d\n", numbytes)
 			if err != nil {
-				// TODO: how do we know this has been returned on error
 				log.Print(err.Error())
 				newConn.VClose()
+				// close the listener connection as well
+				listener.VClose()
 				f.Close()
 				fmt.Printf("Total bytes read: %d\n", bytesReadTotal)
 				return
 			}
-			_, err = f.Write(buf[:numbytes])
-
 			bytesReadTotal += numbytes
 
+			_, err = f.Write(buf[:numbytes])
 			if err != nil {
 				log.Print(err)
 				return

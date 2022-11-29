@@ -25,9 +25,19 @@ func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 		tcbEntry.PendingSendingFinCond.Wait()
 	}
 
+	var nextToSend uint32
+
+	if tcbEntry.State == CLOSE_WAIT {
+		// artificially inflating the nxt number to be consistent n
+		// with the ACK number when we acknowledge the active closer's FIN
+		nextToSend = tcbEntry.RCV.NXT + 1
+	} else {
+		nextToSend = tcbEntry.RCV.NXT
+	}
+
 	// According to Ed post, each packet reaching the ESTABLISHED state should have the ACK flag set
 	tcpHeader := CreateTCPHeader(t.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
-		tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagFin|header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
+		tcbEntry.SND.NXT, nextToSend, header.TCPFlagFin|header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 
 	// prevent any more sending
 	tcbEntry.Cancelled.Store(true)
