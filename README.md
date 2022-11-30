@@ -92,8 +92,14 @@ We did this by storing a map from a packet's expected ACK number (the sequence n
 
 
 ## Congestion Control 
--- Floria 
+Congestion Control 
+For congestion control, I implemented TCP Tahoe, which includes slow start, congestion avoidance, and fast retransmit. I added some additional fields to the TCB, which included the `cwnd` and the `ssthresh`, which are the congestion window and the slow start threshold respectively. I also added an additional field that specified whether or not congestion control is enabled using an atomic boolean value. 
 
+Then, in the `Send()` function, I modified the window that was being used so that it would take the minimum between the advertised window and the `cwnd`. (For sockets that don’t have congestion control enabled, `cwnd` is initialized to be `MAX_BUF_SIZE`). 
+
+And in the `Receive()` function, when we receive a new ACK number, in the case that congestion control is enabled, the `cwnd` would be updated — and it would be updated to a different value depending on whether the `cwnd` was less than `ssthresh` or greater than. If it was less than, slow start would be used and the `cwnd` would be incremented by MSS (which is 1360 bytes). In the case that `cwnd >= ssthresh`, then the `cwnd` would be updated by `(MSS * MSS) / cwnd`. 
+
+To implement fast retransmit, I added another field in the TCB that would keep track of the most recently seen ACK, and also a counter to keep track of the number of times seen. When the counter reached 3 duplicate ACKs, the frequency would be updated down to 0 and the packet would be retransmitted. 
 
 --- 
 
