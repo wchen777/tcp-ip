@@ -63,7 +63,7 @@ We did this by storing a map from a packet's expected ACK number (the sequence n
 
 ## Measuring Performance
 
-For a 2MB sendfile lossless network, our implementation took around 215 seconds. File contents are the same.
+For a 2MB sendfile on a lossless network, our implementation took around 215 seconds. File contents are the same.
 
 ![2mb](packet_capture/2mb_non_lossy_time "2mb")
 
