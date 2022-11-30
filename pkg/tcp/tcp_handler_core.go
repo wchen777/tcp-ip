@@ -71,6 +71,9 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	newTCBEntry.PendingSendingFin = atomic.NewBool(false)
 	newTCBEntry.PendingSendingFinCond = *sync.NewCond(&newTCBEntry.TCBLock)
 
+	newTCBEntry.CControlEnabled = atomic.NewBool(false)
+	newTCBEntry.CWND = MAX_BUF_SIZE
+
 	// add to the socket table
 	t.SocketTable[socketData] = newTCBEntry
 
@@ -493,6 +496,23 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 	// no data could be sent from the other side, but still want to process the sender side!
 	ackNum := tcpHeader.AckNumber()
 
+	if tcbEntry.CControlEnabled.Load() && ackNum == tcbEntry.CurrentAck {
+		// we should only reach here in the event that congestion control
+		// is enabled
+		log.Printf("ack num received: %d\n", tcbEntry.CurrentAck)
+		log.Printf("ack number frequency: %d\n", tcbEntry.CurrentAckFreq)
+		if tcbEntry.CurrentAckFreq == 3 && len(tcbEntry.RetransmissionQueue) > 0 {
+			// checking to see if we can retransmit
+			log.Print("DUP 3 TIMES")
+			t.fastRetransmit(tcbEntry, socketData)
+			tcbEntry.CurrentAckFreq = 0
+			return
+		} else {
+			// increment the frequency otherwise
+			tcbEntry.CurrentAckFreq++
+		}
+	}
+
 	// log.Printf("Ack num received: %d\n", ackNum)
 	// log.Printf("Window size received: %d\n", uint32(tcpHeader.WindowSize()))
 	if tcpHeader.WindowSize() == 0 { // if the received advertized window size fell to 0, and the ack is out range, drop the packet
@@ -513,6 +533,15 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 	}
 	// remove ACK'ed segment from the queue
 	t.removeFromRetransmissionQueue(tcbEntry, ackNum)
+
+	if tcbEntry.CControlEnabled.Load() {
+		t.UpdateCWNDWindow(tcbEntry)
+
+		// reset the ack num and the corresponding frequency
+		tcbEntry.CurrentAck = ackNum
+		log.Printf("Updated current ack after receiving a new one: %d\n", tcbEntry.CurrentAck)
+		tcbEntry.CurrentAckFreq = 1
+	}
 
 	// call cacluate SRTT + RTO function
 	tcbEntry.SND.WND = uint32(tcpHeader.WindowSize()) // update the advertised window size given this info
@@ -597,7 +626,8 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 		// log.Printf("UNA Sending: %d\n", tcbEntry.SND.UNA)
 		// log.Printf("WND Sending: %d\n", tcbEntry.SND.WND)
 
-		for tcbEntry.SND.NXT-tcbEntry.SND.UNA < tcbEntry.SND.WND {
+		for tcbEntry.SND.NXT-tcbEntry.SND.UNA < Min(tcbEntry.SND.WND, tcbEntry.CWND) {
+			log.Printf("Current window size: %d\n", Min(tcbEntry.SND.WND, tcbEntry.CWND))
 			// log.Print("Each iteration of send 2")
 			// log.Printf("NXT prior to sending: %d\n", tcbEntry.SND.NXT)
 			// log.Printf("LBW prior to sending: %d\n", tcbEntry.SND.LBW)
@@ -622,7 +652,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 			}
 
 			// how much we can send, which is constrainted by the window size starting from UNA
-			totalWinIndex := tcbEntry.SND.UNA + tcbEntry.SND.WND
+			totalWinIndex := tcbEntry.SND.UNA + Min(tcbEntry.SND.WND, tcbEntry.CWND)
 			amountToSend := Min(totalWinIndex-tcbEntry.SND.NXT, tcbEntry.SND.LBW-tcbEntry.SND.NXT)
 
 			amountSent := uint32(0)
@@ -761,7 +791,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 		}
 
 		// so if they are equal this means that we need to sleep until data has been ACKed
-		for tcbEntry.SND.NXT-tcbEntry.SND.UNA == tcbEntry.SND.WND && tcbEntry.SND.WND != 0 {
+		for tcbEntry.SND.NXT-tcbEntry.SND.UNA == Min(tcbEntry.SND.WND, tcbEntry.CWND) && tcbEntry.SND.WND != 0 {
 			// we've reached the maximum window size, this doesn't necessarily mean that the receive
 			// window is zero, it's just that we can't send any more data until earlier "entries" have been ACKed
 			// log.Print("blocked here")

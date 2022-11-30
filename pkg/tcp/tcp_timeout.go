@@ -102,6 +102,50 @@ func calculateRTO(SRTT time.Duration) time.Duration {
 	return time.Duration(int64(Min64f(float64(RTO_UPPER), Max64f(BETA*float64(SRTT), float64(RTO_LOWER)))))
 }
 
+func (t *TCPHandler) fastRetransmit(tcbEntry *TCB, socketData *SocketData) {
+	// this should only be called in the event that three duplicate ACKs are received
+	// in which case we retransmit the first in the retransmit queue
+	// the TCBEntry is locked on entry from the receive function
+	log.Print("Reached fast retransmit")
+	t.AfterLoss(tcbEntry)
+
+	retransmitPacket := tcbEntry.RetransmissionQueue[0] // retransmit the first item on the queue
+
+	// create packet to retransmit
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.BigEndian, socketData.LocalAddr)
+	binary.Write(buf, binary.BigEndian, socketData.DestAddr)
+
+	bufToSend := buf.Bytes()
+	bufToSend = append(bufToSend, MarshallTCPHeader(retransmitPacket.TCPHeader, socketData.DestAddr)...)
+
+	// Get the original payload from the buffer
+	seq_num_index := SequenceToBufferInd(retransmitPacket.TCPHeader.SeqNum)
+	payload := make([]byte, retransmitPacket.PayloadLen)
+
+	// handle wrap around for retransmit packet in buffer
+	if seq_num_index+retransmitPacket.PayloadLen > MAX_BUF_SIZE {
+		firstCopy := MAX_BUF_SIZE - seq_num_index
+		secondCopy := seq_num_index + retransmitPacket.PayloadLen - MAX_BUF_SIZE
+		copy(payload, tcbEntry.SND.Buffer[seq_num_index:])
+		copy(payload[firstCopy:], tcbEntry.SND.Buffer[:secondCopy])
+	} else {
+		copy(payload, tcbEntry.SND.Buffer[seq_num_index:seq_num_index+retransmitPacket.PayloadLen])
+	}
+
+	tcbEntry.SegmentToTimestamp[seq_num_index+retransmitPacket.PayloadLen] = time.Now().UnixNano()
+	tcbEntry.RTO *= 2 // exponential backoff
+
+	// unlock mutex for TCB, on return we should just return from receive
+	tcbEntry.TCBLock.Unlock()
+
+	// extend the buffer that we are sending with the payload
+	bufToSend = append(bufToSend, payload...)
+	t.IPLayerChannel <- bufToSend
+
+	tcbEntry.RTOTimeoutChan <- true
+}
+
 // goroutine function to check timeout
 // TODO: where should we first call this routine?
 func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
@@ -151,6 +195,12 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 			}
 
 			// log.Print("retransmitting data packet")
+			if tcbEntry.CControlEnabled.Load() {
+				// if congestion control is enabled, we want to make sure the window and slow
+				// start threshold are updated
+				t.AfterLoss(tcbEntry)
+			}
+
 			retransmitPacket := tcbEntry.RetransmissionQueue[0] // retransmit the first item on the queue
 			tcbEntry.RetransmitCounter++
 

@@ -32,6 +32,10 @@ const (
 	// MAX_BUF_SIZE = 10
 	MSS_DATA = 1360 // maximum segment size of the data in the packet, 1400 - TCP_HEADER_SIZE - IP_HEADER_SIZE
 	MSL      = 5    // maximum segment lifetime
+	// constants for congestion control
+	INIT_CWND      = MSS_DATA      // initially 1 MSS size
+	INIT_THRESHOLD = (1 << 16) - 1 // set to some really high value to start with
+	MAX_DUP        = 3             // the maximum number of duplicates for ACKs
 )
 
 // The Send struct and Receive structs will be used to implement sliding window
@@ -98,6 +102,12 @@ type TCB struct {
 	PendingConnCond    sync.Cond
 	PendingConnMutex   sync.Mutex
 	PendingConnections []SocketData
+	// Additional fields for congestion control
+	CWND            uint32
+	SSTHRESH        uint32
+	CControlEnabled *atomic.Bool // this is to indicate whether it's set or not
+	CurrentAck      uint32       // this is for fast retransmit
+	CurrentAckFreq  int          // this is for keeping track of how many times we have seen this ACK
 }
 
 /*

@@ -71,7 +71,7 @@ func (n *Node) ConnectCommand(destAddr net.IP, port uint16) (int, error) {
 
 func (n *Node) ListSocketCommand(w io.Writer) {
 	toDelete := make([]int, 0)
-	fmt.Fprintf(w, "socket\tlocal-addr\tport\tdst-addr\tport\tstatus\n")
+	fmt.Fprintf(w, "socket\tlocal-addr\tport\tdst-addr\tport\tstatus\tccontrol\tcwnd\n")
 	for i, socket := range n.SocketIndexTable {
 		if socket == nil {
 			continue
@@ -84,7 +84,19 @@ func (n *Node) ListSocketCommand(w io.Writer) {
 		localAddr := addrNumToIP(socketData.LocalAddr)
 		destAddr := addrNumToIP(socketData.DestAddr)
 		status := tcp.SocketStateToString(n.TCPHandler.SocketTable[socketData].State)
-		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%d\t%s\n", i, localAddr, socketData.LocalPort, destAddr, socketData.DestPort, status)
+
+		// Need to print out information for congestion control
+		var congestionControl string
+		var congestionWindow uint32
+		if n.TCPHandler.SocketTable[socketData].CControlEnabled.Load() {
+			congestionControl = "tahoe"
+			congestionWindow = n.TCPHandler.SocketTable[socketData].CWND
+		} else {
+			congestionControl = "none"
+			congestionWindow = 0
+		}
+		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%d\t%s\t%s\t%d\n", i, localAddr, socketData.LocalPort, destAddr,
+			socketData.DestPort, status, congestionControl, congestionWindow)
 	}
 
 	for _, index := range toDelete {
@@ -239,7 +251,7 @@ func (n *Node) ShutDownTCPCommand(socketID int, option string) error {
 }
 
 // Connect to the given ip and port, send the entirety of the specified file, and close the connection.
-func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) error {
+func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16, ccontrol bool) error {
 	addr := net.ParseIP(ipAddr)
 	if addr == nil {
 		return errors.New("Invalid ip address\n")
@@ -259,6 +271,11 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 	}
 	// and add it to the socket table
 	socketID := n.AddToTable(newConn)
+
+	if ccontrol {
+		// enable congestion control for the socket
+		n.TCPHandler.SetCCForSocket(newConn)
+	}
 
 	// read file until EOF and send each amount that we read
 	// perhaps we can read like a chunk size each time? aka 1024 bytes

@@ -270,7 +270,7 @@ func (n *Node) REPL() {
 				fmt.Println(err.Error())
 			}
 		case "sf":
-			if len(commands) != 4 {
+			if len(commands) != 4 && len(commands) != 5 {
 				fmt.Printf("Invalid number of arguments for sf\n")
 				break
 			}
@@ -279,7 +279,13 @@ func (n *Node) REPL() {
 				fmt.Printf("Invalid port number\n")
 				break
 			}
-			err = n.SendFileTCPCommand(commands[1], commands[2], uint16(port))
+			var ccontrol bool
+			if len(commands) == 5 {
+				ccontrol = commands[4] == "tahoe"
+			} else {
+				ccontrol = false
+			}
+			err = n.SendFileTCPCommand(commands[1], commands[2], uint16(port), ccontrol)
 			if err != nil {
 				fmt.Println(err.Error())
 			}
@@ -297,6 +303,26 @@ func (n *Node) REPL() {
 			if err != nil {
 				fmt.Println(err.Error())
 			}
+		case "lc":
+			if len(commands) != 1 {
+				fmt.Printf("Invalid number of arguments for lc\n")
+				break
+			}
+			n.ListCongestionControl()
+		case "sc":
+			if len(commands) != 3 {
+				fmt.Printf("Invalid number of arguments for sc\n")
+				break
+			}
+			if commands[2] != "tahoe" && commands[2] != "none" {
+				fmt.Printf("Invalid option for congestion control\n")
+				break
+			}
+			socketId, err := strconv.Atoi(commands[1])
+			if err != nil {
+				fmt.Printf("Invalid socket id number: %s\n", commands[1])
+			}
+			n.SetCongestionControl(socketId, commands[2] == "tahoe")
 		default:
 			n.PrintHelp(w)
 			w.Flush()
