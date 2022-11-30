@@ -38,7 +38,6 @@ func (t *TCPHandler) UpdateCWNDWindow(tcbEntry *TCB) {
 		log.Printf("Updating the congestion window during slow start: %d\n", tcbEntry.CWND)
 	} else {
 		// congestion avoidance
-		// TODO: figure out why this math works
 		tcbEntry.CWND += (MSS_DATA * MSS_DATA) / tcbEntry.CWND
 		log.Printf("Updating the congestion window during congestion avoidance: %d\n", tcbEntry.CWND)
 	}

@@ -310,27 +310,27 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16, c
 // Once established, write everything you can read from the socket to the given file.
 // Once the other side closes the connection, close the connection as well.
 func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
-	// start listening on port number that is specified
-	listener, err := n.VListen(port)
-	if err != nil {
-		return err
-	}
-
-	n.AddToTable(listener)
-
-	// a new connection has been established, so we should
-	newConn, err := listener.VAccept()
-
-	// adding the new connection to the table
-	n.AddToTable(newConn)
-
-	// create a buffer to read data into
-	buf := make([]byte, 4096)
-
-	// open the file to write what is read to the file
-	f, err := os.Create(filepath)
-
 	go func() {
+		// start listening on port number that is specified
+		listener, err := n.VListen(port)
+		if err != nil {
+			fmt.Print(err)
+			return
+		}
+
+		n.AddToTable(listener)
+
+		// a new connection has been established, so we should
+		newConn, err := listener.VAccept()
+
+		// adding the new connection to the table
+		n.AddToTable(newConn)
+
+		// create a buffer to read data into
+		buf := make([]byte, 4096)
+
+		// open the file to write what is read to the file
+		f, err := os.Create(filepath)
 		bytesReadTotal := uint32(0)
 		for {
 			numbytes, err := newConn.VRead(buf, 4096, false)

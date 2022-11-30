@@ -7,8 +7,8 @@ import (
 )
 
 func (n *Node) ListCongestionControl() {
-	fmt.Print("Congestion control algorithms available: ")
-	fmt.Print("--tahoe")
+	fmt.Print("Congestion control algorithms available: \n")
+	fmt.Print("--tahoe\n")
 }
 
 func (n *Node) SetCongestionControl(socketId int, congestionControl bool) error {
