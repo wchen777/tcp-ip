@@ -278,6 +278,7 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16) e
 			return err
 		}
 		bytesWritten += numBytesWritten
+		//log.Printf("bytes written so far: %d\r\n", bytesWritten)
 	}
 	fmt.Printf("Total bytes written: %d\n", bytesWritten)
 
@@ -333,7 +334,7 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 				return
 			}
 
-			//log.Printf("total bytes read: %d\n", bytesReadTotal)
+			//log.Printf("bytes read so far: %d\r\n", bytesReadTotal)
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()

@@ -277,6 +277,7 @@ func (n *Node) REPL() {
 			port, err := strconv.Atoi(commands[3])
 			if err != nil {
 				fmt.Printf("Invalid port number\n")
+				break
 			}
 			err = n.SendFileTCPCommand(commands[1], commands[2], uint16(port))
 			if err != nil {
@@ -290,6 +291,7 @@ func (n *Node) REPL() {
 			port, err := strconv.Atoi(commands[2])
 			if err != nil {
 				fmt.Printf("Invalid port number\n")
+				break
 			}
 			err = n.ReadFileTCPCommand(commands[1], uint16(port))
 			if err != nil {

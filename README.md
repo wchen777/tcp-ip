@@ -63,6 +63,11 @@ We did this by storing a map from a packet's expected ACK number (the sequence n
 
 ## Measuring Performance
 
+For a 2MB sendfile lossless network, our implementation took around 215 seconds. File contents are the same.
+
+![2mb](packet_capture/2mb_non_lossy_time "2mb")
+
+
 Throughput graph of a 1MB sendfile through with a 2% lossy node in between:
 
 ![throughput](packet_capture/throughput "throughput")
@@ -93,7 +98,7 @@ Packets 56, 62.
 
 ### One segment that is retransmitted
 
-Packets 185 (not show in screenshot), 235, 236.
+Packets 185 (not shown in screenshot), 235, 236.
 
 ![retransmission](packet_capture/retransmission.png "Retransmission")
 
