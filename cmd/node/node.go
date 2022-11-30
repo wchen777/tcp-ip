@@ -210,7 +210,7 @@ func (n *Node) REPL() {
 			n.ListSocketCommand(w)
 			w.Flush()
 		case "s":
-			if len(commands) != 3 {
+			if len(commands) < 3 {
 				fmt.Print("Invalid number of arguments for s\n")
 				break
 			}

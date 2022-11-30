@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/google/netstack/tcpip/header"
@@ -80,7 +79,7 @@ func (t *TCPHandler) updateTimeout(tcbEntry *TCB, segmentReceivedNum uint32) {
 		tcbEntry.SRTT = SRTT
 	}
 
-	log.Printf("SRTT: %d\n", tcbEntry.SRTT)
+	//log.Printf("SRTT: %d\n", tcbEntry.SRTT)
 
 	RTO := calculateRTO(tcbEntry.SRTT) // use SRTT to calc retransmission timeout (in time.duration)
 	tcbEntry.RTO = RTO

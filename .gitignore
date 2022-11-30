@@ -12,3 +12,9 @@
 *.lnx
 
 node
+
+testfile
+
+sendfile
+
+readfile

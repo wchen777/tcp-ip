@@ -258,7 +258,7 @@ func (t *TCPHandler) WaitForClosed(tcbEntry *TCB, key *SocketData) {
 	// Set a timeout, and once we reach the timeout, then we set the state to be closed
 	// there is a chance however, we might get another FIN and need to reset the timeout
 	timeout := time.After(time.Duration(2 * time.Second * MSL))
-
+	log.Print("waiting 2 * MSL to close connection")
 	for {
 		select {
 		case <-tcbEntry.ResetWaitChan:

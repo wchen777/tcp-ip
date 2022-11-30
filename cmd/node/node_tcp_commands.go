@@ -316,7 +316,6 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 		bytesReadTotal := uint32(0)
 		for {
 			numbytes, err := newConn.VRead(buf, 4096, false)
-			// log.Printf("amount read: %d\n", numbytes)
 			if err != nil {
 				log.Print(err.Error())
 				newConn.VClose()
@@ -334,6 +333,7 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 				return
 			}
 
+			//log.Printf("total bytes read: %d\n", bytesReadTotal)
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()

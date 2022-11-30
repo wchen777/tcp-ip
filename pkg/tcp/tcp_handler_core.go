@@ -264,9 +264,9 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 			} else {
 				// wait until we can get more data to read until amountToRead
 				for tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
-					log.Print("Blocked because LBR is equal NXT")
+					//log.Print("Blocked because LBR is equal NXT")
 					tcbEntry.RCV.ReadBlockedCond.Wait()
-					log.Print("Unblocked here")
+					//log.Print("Unblocked here")
 					if tcbEntry.RCV.LBR == tcbEntry.RCV.NXT && (tcbEntry.State == CLOSE_WAIT || tcbEntry.TimeoutCancelled.Load()) {
 						tcbEntry.TCBLock.Unlock()
 						return 0, io.EOF

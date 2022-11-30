@@ -10,6 +10,7 @@ import (
 
 // Both socket types will need a close, so pass in socket instead
 // then we can call getTye to get the exact object
+// handles close for both active closer and passive closer
 func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 	// STEPS:
 	// send a FIN to receiver
