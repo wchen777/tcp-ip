@@ -163,7 +163,6 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 	// log.Printf("socket data structure after receiving: %v\n", key)
 	if tcbEntry, exists := t.SocketTable[key]; exists {
 		// connection exists
-		// TODO: call appropriate function for each state
 		// Switch on the state of the receiving socket once a packet is received
 		// This is implemented from Section 3.10
 		switch tcbEntry.State {
@@ -207,7 +206,6 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 		}
 	} else {
 		// connection does not exist
-		// TODO: what to do here, do we treat the packet as effectively dropped?
 		return
 	}
 }

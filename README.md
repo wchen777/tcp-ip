@@ -2,23 +2,55 @@
 
 ## API Design Choices
 ### What happens when a packet is received 
--- Floria 
+- From the IP layer, when each TCP packet is received, the TCP handler will be called accordingly, reaching the 
+`ReceivePacket` routine found in `tcp_handler.go`. From there, after computing the checksum, using the fields found in both the IP header and the TCP header, an instance of a SocketData struct is created—this is effectively the tuple into the socket table that the TCP handler keeps track of for this particular node. And with this SocketData struct, we find the corresponding TCB entry from the socket table (and if the entry doesn't exist the packet is dropped). Then, we switch on the state that the socket is currently in and call the appropriate handler routine for each of the corresponding states. And within each state function, additional checks are done on the header flags and each packet is handled accordingly to the state machine diagram. 
+
+The TCB doesn't actually store the conn object that are returned from API calls such as VConnect and VAccept. Instead we treated VTCPConn and VTCPListeners as abstractions in that in each API call, it would effectively be a wrapper around the corresponding TCP handler -- each of these "conns" would store a pointer to the TCP handler and in each API function, it would invoke the handler's corresponding function. For instance, in the case of `VRead` and `Vwrite`, it would call `TCPHandler.Read` and `TCPHandler.Write`. We designed it this way as the TCP handler was effectively functioning as the network stack found in the kernel and we needed a way to 'transfer control' to the kernel, so to speak. Each of these conn objects would store their SocketData structure, so that when the TCP handler functions called, they would be able to use the conn objects passed in to find the corresponding TCB entry. 
+
+The two API calls that are not explicitly related to the API of a connection are invoked by the node instead using the TCP handler. 
+
+## Concurrency 
+Each access to the TCB Entry is protected via a mutex and most of the condition variables used are also protected by the same mutex. 
+
+There are places that we could maybe be a bit more fine grained about the locking, but there are places that we tried to optmize. 
 
 ### VTCPConn
--- Floria 
-
 **Read**
+- `readAll` flag would indicate whether or not ALL the amount of bytes specified would need to ALL be read. 
+- The assumptions made in this call was that the user had already preallocated the correct amount of space to adequately read all the data for the data array that was passed in
+
+Because there is a possibility that the socket could have reading shutdown, we added a check to see if reading has been cancelled (using an atomic boolean variable), we also have a similar check to see if we are reading on a socket that has already terminated due to a retransmission timeout. In the event that the socket is in CLOSE_WAIT and there is no data to be read, we return immediately. If CLOSE_WAIT is specified, but there is still data to be read, then we will still read as there could still be data that hasn't been read yet (even though it might be ACK'ed already). 
+
+At the beginning of each loop, we check to see if there's still data to be read using the appropriate pointers -- i.e. if `LBR != RCV.NXT` and if there isn't data to be read but `readAll` flag was false and there was some data that we read, then we should return. Otherwise, we block using a condition variable that the Receiver will notify until either data becomes available to read or the socket has terminated (and there is no data left to read) -- either because we are in CLOSE_WAIT or a retransmit timeout has occurred. 
+
+And once data becomes available, we copy it into the user allocated buffer, taking into account in the event that the receive buffer wraps around. 
 
 **Write**
+In the event that the write part of the connection has been closed, at the top of the write routine, we check a boolean flag that indicates whether or not writing is permitted. There might be a case in which the variable is modified in the Write routine, we decided that in that case, the write should still complete, but the next time the write is called, the write will not succeed. 
 
+The write routine could block in the event that there is no space available left in the buffer, to account for this we use a condition variable `WriteBlockedCond`, which will be broadcasted to in the event that `SND.UNA` increments due to old data being acknowledged. Once there is space left in the buffer, the data from the user is then copied into the send buffer. For each iteration of a for loop, we determine how much can be copied at a time: the minimum between how much space is remaining in the buffer and how much hasn't been written yet. At the end of each for loop, a condition variable is signaled in the event that the Sender is waiting for more data to be placed in the SND buffer. 
 
 ### VTCPListener
--- Floria 
+**Accept**
+Each listener socket TCB entry has an additional field that keeps track of pending connections, which is for the case in which a connection is made to the listener before `Accept()` is called. Thus the first thing that is checked in `Accept()` is whether there are pending connections, in which case the first connection is popped of the queue and returned. 
+
+If there are no pending connections, then this routine will wait on a condition variable and signaled to when a new connection has been established and added to the queue. (To implement this, we added a new variable in the TCB Entry such that when a new connection is established from connecting to the listener, the resulting TCB entry keeps track of the listener's tuple of data and is able to index into the socket table and signal the listener's condition variable that way). 
+
+**Close**
+The listener has a separate close call than a normal connection: 
+- It's marked as cancelled 
+  - The pending condition variable is signaled and thus in Accept() after the wait, this boolean variable is checked 
+- The entry is removed from the socket table 
 
 ## Sender
--- Floria 
+When a connection reached the `ESTABLISHED` state, it spawns a goroutine that is running an infinite for loop that waits until there is data available to be sent or there is more space available in the send window. We implemented this using a number of condition variables: 
+- SendBlockedCond --> will be notified in Write() when data is available to be sent 
+- ZeroBlockedCond --> the routine will wait here until the window is no longer equal to zero, this will be signaled to in Receive() when the advertised window is no longer equal to 0 
+- WriteBlockedCond --> the routine will wait here when an entire window of data has been sent, thus will need to wait until some data has been ACK'ed before sending more. This is broadcasted to in Recieve(). 
 
-### Write call
+For each iteration of this infinite for loop, we have an inner for-loop that keeps executing while there is space left available in the window to send. And for each iteration of this inner for-loop, the amount sent is the minimum between how much is left in the window and how much data there actually is in the buffer (distance between LBW and NXT); the routine is blocked in the case that there is data is available to be sent. 
+
+In the event that the advertised window becomes 0 and there is data left to be sent, a goroutine is created that will do the zero probing with 1 byte of data until the condition variable is signaled to and the goroutine is cancelled. In this case the SND.NXT pointer is incremented by 1 to account for 1 byte of data that was sent. 
 
 ## Receiver
 
@@ -40,10 +72,14 @@ When a packet received that had a sequence number that was greater than the rece
 
 When a packet received has the expected sequence number of equal to our receiver's NXT pointer, we checked to see the early arrivals queue if any packets in the queue could be "merged" with this packet and ACK'd all at once. If so, we would return the highest ACK num that the receiver could send back that acknowledged a continuous segment in the buffer, updating all necessary pointers accordingly.
 
-
-
 ## Connection Teardown 
--- Floria 
+When Close() is called on a normal connection, we will try to send a FIN, though in the case that there is more data to be sent, we have a condition variable that blocks until all data has been sent and is notified in the `Write()` routine. 
+
+After sending a FIN, and adjusting the state appropriately, the routine will block on a channel waiting to get the notification that a connection is now in the state `CLOSED` and the TCB entry can be removed from the socket table. The appropriate condition variables are also signaled: namely, `SendBlockedCond` and `WriteBlockedCond`.  
+
+Afterwards, the appropriate state changes are handled in `tcp_segment_receive.go`. 
+
+Once a connection has reached `FIN_WAIT_2` and receives a FIN and goes into `TIME_WAIT`, a goroutine is created to wait `2*MSL` before notifying `Close()` that the TCB entry can be deleted. In the event that another FIN is received in `TIME_WAIT`, the timer is reset and the `2*MSL` wait restarts. 
 
 ## Handling Timeout/Retransmissions
 To implement timeouts and retransmissions, we used a timer for each TCB entry/socket that would reset once a packet is sent or if an ACK was received that acknowledged new data that was sent. 

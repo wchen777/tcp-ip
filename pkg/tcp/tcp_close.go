@@ -67,8 +67,7 @@ func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 	tcbEntry.TCBLock.Unlock()
 
 	for {
-		// wait to get notification that we are in FIN WAIT 2 or in CLOSED
-		// depending on active vs. passive close
+		// wait to get notification that we have finally reached the CLOSED state
 		select {
 		case <-tcbEntry.ReceiveChan:
 			delete(t.SocketTable, *socketData)
