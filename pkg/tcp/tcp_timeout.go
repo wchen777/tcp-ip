@@ -109,6 +109,7 @@ func (t *TCPHandler) fastRetransmit(tcbEntry *TCB, socketData *SocketData) {
 	log.Print("Reached fast retransmit")
 	t.AfterLoss(tcbEntry)
 
+	tcbEntry.CurrentAckFreq = 0
 	retransmitPacket := tcbEntry.RetransmissionQueue[0] // retransmit the first item on the queue
 
 	// create packet to retransmit

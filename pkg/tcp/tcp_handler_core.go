@@ -504,8 +504,8 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 		if tcbEntry.CurrentAckFreq == 3 && len(tcbEntry.RetransmissionQueue) > 0 {
 			// checking to see if we can retransmit
 			log.Print("DUP 3 TIMES")
-			t.fastRetransmit(tcbEntry, socketData)
 			tcbEntry.CurrentAckFreq = 0
+			t.fastRetransmit(tcbEntry, socketData)
 			return
 		} else {
 			// increment the frequency otherwise
