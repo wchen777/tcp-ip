@@ -93,7 +93,9 @@ Packets 56, 62.
 ![sent+ack](packet_capture/sent+ack.png "Send and Ack")
 
 56: `192.168.0.4` sends a packet with sequence number 16385 and payload length 1360, expecting an ACK number of 16385+1360= 17745
+
 57-61: (`192.168.0.4` continues to send through its buffer) 
+
 62: `192.168.0.1` responds with an ACK acknowledging (all data up until) this packet.
 
 ### One segment that is retransmitted
@@ -103,8 +105,11 @@ Packets 185 (not shown in screenshot), 235, 236.
 ![retransmission](packet_capture/retransmission.png "Retransmission")
 
 185: `192.168.0.4` sends a packet with sequence number 103617.
+
 233,234: `192.168.0.1` still has not received a packet with sequence number 103617 although `192.168.0.4` has sent beyond this sequence number. `192.168.0.1` responds that it is still expecting 103617
+
 235: `192.168.0.4` times out and retransmits packet with sequence number 103617.
+
 236: `192.168.0.1` is able to acknowledge this packet, along with the other packets it has queued up in early arrivals, responding with sequence number 131072
 
 ### Connection Teardown
@@ -114,9 +119,13 @@ Packets: 2270, 2274, 2275, 2276
 ![teardown](packet_capture/teardown.png "Teardown")
 
 2270: `192.168.0.4` is done sending, so it sends a FIN
+
 2271-2273: `192.168.0.1` is not done acknowledging data, so it queues the FIN and responds with its current ACK number, while acknowledging more data
+
 2274: `192.168.0.1` acknowledges the FIN sent by `192.168.0.4`
+
 2275: `192.168.0.1` now can send its own FIN to terminate the connection
+
 2276: `192.168.0.4` acknowledges the FIN sent by `192.168.0.4`
 
 
