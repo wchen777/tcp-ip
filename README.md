@@ -7,6 +7,11 @@
 ### VTCPConn
 -- Floria 
 
+**Read**
+
+**Write**
+
+
 ### VTCPListener
 -- Floria 
 
@@ -16,16 +21,39 @@
 ### Write call
 
 ## Receiver
--- Will
+
+Upon arrival of a segment, we split up each different TCP state with each of their own handlers to process the packet differently, depending on what packets that state expects.
+
+In the handshake, when a packet arrives that conforms to the expectations in the RFC (for example when an ACK arrives for a SYN in `SYN-SENT`), we progress to the next state and create TCB data structures when appropriate.
+
+When in `ESTABLISHED`, we utilize a function called `Receive()` in `tcp_handler_core.go` that processes incoming packets. (This function is also used to process packets normally in states such as `FIN WAIT 2`).
+
+This function checks to see if the packet has a payload, if so, it checks to see whether the packet's sequence number is valid, adds the payload to the buffer if so, and increments necessary buffer pointers. 
+Then it will send an ACK back to the sender acknowledging what it currently has if the packet's sequence number was invalid, or the updated pointer values if the receiver was able to process data. This process also signals waiting threads blocked on a condition that there needs to be data to be received in the buffer before reading.  
+
+Because the receiver can also send data, we also check the ACK number this packet has. If the ACK number is valid and acknowledges new data, then we increment necessary pointers for the sender side. This also signals blocked threads waiting on more data to be acknowledged in the buffer before sending more, as well as if the window has now been updated from 0 to stop zero-probing.
 
 ### Early Arrivals 
--- Will
+We used a min-heap data structure sorted based on the sequence number of the packet as our early arrivals queue. This queue stored the payload length as well which allowed us to find the "boundary" of what segment this packet contained in the buffer.
+
+When a packet received that had a sequence number that was greater than the receiver's NXT pointer but still within the window, we would add it to our early arrivals data structure.
+
+When a packet received has the expected sequence number of equal to our receiver's NXT pointer, we checked to see the early arrivals queue if any packets in the queue could be "merged" with this packet and ACK'd all at once. If so, we would return the highest ACK num that the receiver could send back that acknowledged a continuous segment in the buffer, updating all necessary pointers accordingly.
+
+
 
 ## Connection Teardown 
 -- Floria 
 
 ## Handling Timeout/Retransmissions
--- Will
+To implement timeouts and retransmissions, we used a timer for each TCB entry/socket that would reset once a packet is sent or if an ACK was received that acknowledged new data that was sent. 
+
+If the timer were to timeout, we would send the most recently unacknowledged packet in a retransmission queue, which contained the payload length and the packet's header. We chose to store these values as we could use the header data to reconstruct the packet, and find the payload data by re-indexing into the buffer using the payload length and the packets sequence number in the header. We also have the guarantee that the retransmission queue is always ordered based on sequence number due to the sender always sending sequentially (and the data is also guaranteed to be in the buffer).
+When an ACK would be received, we would need to update the retransmission queue by removing all packets that the incoming ACK num had acknowledged.
+
+To calculate the dynamically updating timeout values, we used the RTO (retransmission timout) formula given in lecture that utilized the previous SRTT (smoothed round-trip time) and the current calculated RTT (round-trip time) in order to calculate the new SRTT.
+We did this by storing a map from a packet's expected ACK number (the sequence number + length of payload) to a timestamp, and when the ACK would be received for that packet, we took the difference in timestamps and found the RTT, which would be used to find the RTO. On the first packet, we special cased the SRTT to just be the RTT.
+
 
 ## Congestion Control 
 -- Floria 

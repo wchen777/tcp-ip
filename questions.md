@@ -92,7 +92,7 @@ questions to ask:
   - if, as a sender, the RCV.NXT is old -> this is ok
   - if, as a sender, the RCV.WND is old (bigger than what it should be) -> need to check for a payload that extends farther than our window and truncate
     - we got rid of this check, so maybe add it back?
-  - (check as the other cases where as a receiver, the sender fields are older due to not taking a lock on the SND values)
+  - (check as the other cases whereas a receiver, the sender fields are older due to not taking a lock on the SND values)
 
 - when should a receiver ACK?
   - should ACK **any** packet that has data (len(payload) > 0), but with our current RCV.NXT.
