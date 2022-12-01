@@ -66,13 +66,13 @@ func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 
 	tcbEntry.SND.NXT += 1
 
-	//retransmitSegment := &RetransmitSegment{TCPHeader: &tcpHeader, PayloadLen: 0}
-	// tcbEntry.RetransmissionQueue = append(tcbEntry.RetransmissionQueue, retransmitSegment)
+	retransmitSegment := &RetransmitSegment{TCPHeader: &tcpHeader, PayloadLen: 0}
+	tcbEntry.RetransmissionQueue = append(tcbEntry.RetransmissionQueue, retransmitSegment)
 
 	tcbEntry.TCBLock.Unlock()
 
 	// update the timeout
-	// tcbEntry.RTOTimeoutChan <- true
+	tcbEntry.RTOTimeoutChan <- true
 
 	for {
 		// wait to get notification that we have finally reached the CLOSED state

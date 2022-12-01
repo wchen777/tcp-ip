@@ -219,20 +219,16 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 			seq_num_index := SequenceToBufferInd(retransmitPacket.TCPHeader.SeqNum)
 			payload := make([]byte, retransmitPacket.PayloadLen)
 
-			//if retransmitPacket.PayloadLen > 0 {
-			// handle wrap around for retransmit packet in buffer
-			if seq_num_index+retransmitPacket.PayloadLen > MAX_BUF_SIZE {
-				firstCopy := MAX_BUF_SIZE - seq_num_index
-				secondCopy := seq_num_index + retransmitPacket.PayloadLen - MAX_BUF_SIZE
-				copy(payload, tcbEntry.SND.Buffer[seq_num_index:])
-				copy(payload[firstCopy:], tcbEntry.SND.Buffer[:secondCopy])
-			} else {
-				copy(payload, tcbEntry.SND.Buffer[seq_num_index:seq_num_index+retransmitPacket.PayloadLen])
-			}
-			//}
-
-			if (retransmitPacket.TCPHeader.Flags & header.TCPFlagFin) != 0 {
-				log.Print("WHY ARE WE RESENDING THE FUCKING FIN")
+			if retransmitPacket.PayloadLen > 0 {
+				// handle wrap around for retransmit packet in buffer
+				if seq_num_index+retransmitPacket.PayloadLen > MAX_BUF_SIZE {
+					firstCopy := MAX_BUF_SIZE - seq_num_index
+					secondCopy := seq_num_index + retransmitPacket.PayloadLen - MAX_BUF_SIZE
+					copy(payload, tcbEntry.SND.Buffer[seq_num_index:])
+					copy(payload[firstCopy:], tcbEntry.SND.Buffer[:secondCopy])
+				} else {
+					copy(payload, tcbEntry.SND.Buffer[seq_num_index:seq_num_index+retransmitPacket.PayloadLen])
+				}
 			}
 
 			tcbEntry.SegmentToTimestamp[seq_num_index+retransmitPacket.PayloadLen] = time.Now().UnixNano()

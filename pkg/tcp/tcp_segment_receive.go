@@ -298,7 +298,7 @@ func (t *TCPHandler) HandleFinWait2(tcpHeader header.TCP, tcbEntry *TCB, key *So
 		bufToSend := buf.Bytes()
 		bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHdr, key.DestAddr)...)
 
-		// log.Print("Sending ack for FIN: FIN WAIT 2")
+		log.Print("Sending ack for FIN: FIN WAIT 2")
 		t.IPLayerChannel <- bufToSend
 		tcbEntry.ResetWaitChan = make(chan bool)
 		tcbEntry.TCBLock.Unlock()
@@ -334,7 +334,7 @@ func (t *TCPHandler) HandleTimeWait(tcpHeader header.TCP, tcbEntry *TCB, key *So
 		binary.Write(buf, binary.BigEndian, key.DestAddr)
 
 		tcbEntry.TCBLock.Lock()
-		tcbEntry.RCV.NXT += 1 // increment our NXT for the ACK
+		// tcbEntry.RCV.NXT += 1 // increment our NXT for the ACK
 
 		tcpHdr := CreateTCPHeader(key.LocalAddr, key.DestAddr, key.LocalPort, key.DestPort,
 			tcbEntry.SND.NXT, tcbEntry.RCV.NXT, header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
@@ -381,7 +381,7 @@ func (t *TCPHandler) HandleLastAck(tcpHeader header.TCP, tcbEntry *TCB, key *Soc
 		if tcpHeader.AckNumber() == tcbEntry.SND.NXT {
 			tcbEntry.State = CLOSED
 			// this should remove the FIN from the retransmission queue
-			// t.removeFromRetransmissionQueue(tcbEntry, tcpHeader.AckNumber())
+			t.removeFromRetransmissionQueue(tcbEntry, tcpHeader.AckNumber())
 			tcbEntry.ReceiveChan <- *key // notify the applications close function that we can return
 		}
 		tcbEntry.TCBLock.Unlock()
