@@ -37,6 +37,7 @@ func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 	}
 
 	// According to Ed post, each packet reaching the ESTABLISHED state should have the ACK flag set
+	log.Print("Sending fin!!")
 	tcpHeader := CreateTCPHeader(t.LocalAddr, socketData.DestAddr, socketData.LocalPort, socketData.DestPort,
 		tcbEntry.SND.NXT, nextToSend, header.TCPFlagFin|header.TCPFlagAck, tcbEntry.RCV.WND, []byte{})
 
@@ -64,7 +65,14 @@ func (t *TCPHandler) Close(socketData *SocketData, vc *VTCPConn) error {
 	}
 
 	tcbEntry.SND.NXT += 1
+
+	//retransmitSegment := &RetransmitSegment{TCPHeader: &tcpHeader, PayloadLen: 0}
+	// tcbEntry.RetransmissionQueue = append(tcbEntry.RetransmissionQueue, retransmitSegment)
+
 	tcbEntry.TCBLock.Unlock()
+
+	// update the timeout
+	// tcbEntry.RTOTimeoutChan <- true
 
 	for {
 		// wait to get notification that we have finally reached the CLOSED state

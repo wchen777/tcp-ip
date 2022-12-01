@@ -380,6 +380,8 @@ func (t *TCPHandler) HandleLastAck(tcpHeader header.TCP, tcbEntry *TCB, key *Soc
 		// if the ACK acknowledges our FIN packet, go into CLOSED
 		if tcpHeader.AckNumber() == tcbEntry.SND.NXT {
 			tcbEntry.State = CLOSED
+			// this should remove the FIN from the retransmission queue
+			// t.removeFromRetransmissionQueue(tcbEntry, tcpHeader.AckNumber())
 			tcbEntry.ReceiveChan <- *key // notify the applications close function that we can return
 		}
 		tcbEntry.TCBLock.Unlock()
