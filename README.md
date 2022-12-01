@@ -101,6 +101,39 @@ And in the `Receive()` function, when we receive a new ACK number, in the case t
 
 To implement fast retransmit, I added another field in the TCB that would keep track of the most recently seen ACK, and also a counter to keep track of the number of times seen. When the counter reached 3 duplicate ACKs, the frequency would be updated down to 0 and the packet would be retransmitted. 
 
+**Performance Observations**
+
+Graphs over non lossy network:
+In both of these cases, I ran it with the lossy node B.lnx, but without any lossy settings configured. 
+
+A -> B -> C, with C sending A a 100k file 
+
+No congestion control 
+![100k over non lossy network](ccgraphs/100k_no_faulty_node.png "Without congestion control over non lossy network")
+
+With congestion control
+![100k over non lossy network](ccgraphs/100k_no_faulty_node_tahoe.png "With congestion control")
+
+Graphs over a lossy network: 
+In both of these cases, I ran it with the lossy node B.lnx, with 2% lossy configured. 
+
+No congestion control 
+![100k over lossy network](ccgraphs/100k_faulty_node.png "Without congestion control over lossy network")
+
+With congestion control
+![100k over lossy network](ccgraphs/100k_faulty_node_tahoe.png "With congestion control")
+
+Graphs over a non-lossy network, but with competition: 
+In these scenarios, I ran it over a non-lossy network, but instead configured it such that both A and C would be receiving a file and A would be sending a file to C and vice versa. 
+
+No congestion control 
+![100k over lossy network](ccgraphs/100k_competition_node.png "Without congestion control over lossy network")
+
+With congestion control
+![100k over lossy network](ccgraphs/100k_competition_node_tahoe.png "With congestion control")
+
+I couldn’t tell if there was necessarily an observable speed difference when sending data, but it was clear from the graphs produced that the amount of data in flight at a time was a lot less variable than that without congestion control and it followed the pattern of slowly increasing then tapering off, then increasing again (there were isntances, in which the window did increase steeply which I wonder if it's because a lot of new ACKs were received in a short time span). So in each case, the window size didn't vary too much. I did notice in wireshark that there were fewer retransmissions, so it's possible that that the sender was overwhelming the receiver less, and thus there were less un-ACK'ed segments timing out (this is just a conjecture). In terms of how I could improve the algorithm, there were places and scenarios in which a duplicate ACK would technically be ACK'ing data that was new but just received out of order, but the window in those instances would not be incremented as it would be a duplicate ACK. Perhaps to make the algorithm more precise, only increasing the window once a windowful of packets have been ACK'ed. 
+
 --- 
 
 ## Measuring Performance
