@@ -241,11 +241,3 @@ The handler also has an additional AddChanRoutine and RemoveChanRoutine, which i
 We developed this project in the container environment. 
 
 To run, you can run `make` or `make clean all` which should create an executable node, which takes in a lnx file as an argument. 
-
-
-## TODO: 
-- code cleanup! in `host.go` 
-  - cleanup "link layer reading" abstraction
-  - consolidate checksum and sending packet stuff
-  - cleanup any error checking/handling 
-  - send a rip request without any entries on startup (handle rip request/rip response)

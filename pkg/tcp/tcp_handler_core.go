@@ -31,7 +31,6 @@ import (
 func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 	destAddr := binary.BigEndian.Uint32(addr.To4())
 
-	// TODO: how to get the local address and local port?
 	socketData := SocketData{LocalAddr: t.LocalAddr, LocalPort: t.CurrentPort, DestAddr: destAddr, DestPort: port}
 	t.CurrentPort += 1
 
@@ -155,7 +154,6 @@ func (t *TCPHandler) Connect(addr net.IP, port uint16) (*VTCPConn, error) {
 * called by a "server" waiting for new connections
  */
 func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
-	// TODO: check if port is already used + how do we know which interface to listen on?
 	if port <= 1024 {
 		return nil, errors.New("Invalid port number")
 	}
@@ -177,6 +175,7 @@ func (t *TCPHandler) Listen(port uint16) (*VTCPListener, error) {
 		ReceiveChan: make(chan SocketData),
 	}
 	newTCBEntry.PendingConnCond = *sync.NewCond(&newTCBEntry.PendingConnMutex)
+	newTCBEntry.CControlEnabled = atomic.NewBool(false)
 	t.SocketTable[socketTableKey] = newTCBEntry
 
 	return listenerSocket, nil
@@ -259,8 +258,6 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 	for amountReadSoFar < amountToRead {
 
 		if tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
-			// TODO: is it okay if readAll isn't specified and we return 0 bytes read?
-			// 		 not sure what it means to return with at least 1 byte read
 			if !readAll && amountReadSoFar > 0 {
 				tcbEntry.TCBLock.Unlock()
 				return amountReadSoFar, nil // there's nothing to read, so we just return in the case of a non-blocking read
@@ -341,7 +338,6 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 // Send ACKs back to confirm what we expect next
 // This routine only handles ONE packet at a time
 
-// TODO: need to include a early arrival queue
 func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *SocketData, tcbEntry *TCB) {
 	if (tcpHeader.Flags() & header.TCPFlagAck) == 0 {
 		return
@@ -384,8 +380,6 @@ func (t *TCPHandler) Receive(tcpHeader header.TCP, payload []byte, socketData *S
 			// log.Printf("sequence number received: %d\n", seqNumReceived)
 			// log.Printf("sequence number window: %d\n", tcbEntry.RCV.WND)
 			// log.Printf("sequence number is out of range of the window")
-			// TODO: send ACK for zero-probing if NXT is equal to seq num?
-			// TODO: should we still send ACKs here even though this is out of range? (and not zero-probing)
 			//if tcbEntry.RCV.WND == 0 { // responding to zero-probing window -- in this case the WND is 0 so seq num will be equal to NXT
 			// send ACK back w/ current nxt no matter what
 			log.Print("responding to zero probing")
@@ -617,8 +611,6 @@ func (t *TCPHandler) ReceiveFin(tcpHeader header.TCP, socketData *SocketData, tc
 
 // If NXT == LBW, then wait until there is data that has been written
 
-// TODO: add each segment to a queue for retransmission
-
 // Sequence number should increment depending on the segment size
 func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 
@@ -692,7 +684,6 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 				bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 				bufToSend = append(bufToSend, payload...)
 
-				// TODO: check cancellation
 				if tcbEntry.Cancelled.Load() {
 					return
 				}
@@ -716,7 +707,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 				tcbEntry.SegmentToTimestamp[tcbEntry.SND.NXT] = time.Now().UnixNano()
 				tcbEntry.TCBLock.Unlock()
 
-				// TODO: there's a small window at which we can be receiving packets here? maybe?
+				// there's a small window at which we can be receiving packets here? maybe?
 				tcbEntry.RTOTimeoutChan <- true
 				// tcbEntry.TCBLock.Lock()
 				// log.Print("finished updating the timeout in send!")
@@ -768,7 +759,6 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 						bufToSend := buf.Bytes()
 						bufToSend = append(bufToSend, MarshallTCPHeader(&tcpHeader, socketData.DestAddr)...)
 						bufToSend = append(bufToSend, payload...)
-						// TODO: check cancellation
 						if tcbEntry.Cancelled.Load() {
 							tcbEntry.SND.ZeroBlockedCond.Signal()
 							return
@@ -894,7 +884,7 @@ func (t *TCPHandler) Write(data []byte, vc *VTCPConn) (uint32, error) {
 		tcbEntry.SND.LBW += bytesToWrite
 		// log.Printf("amount written: %d\n", amountWritten)
 
-		// TODO: signal to the sender that there is data
+		// signal to the sender that there is data
 		tcbEntry.SND.SendBlockedCond.Signal()
 		tcbEntry.TCBLock.Unlock()
 

@@ -11,7 +11,7 @@ import (
 type VTCPConn struct {
 	SocketTableKey SocketData
 	TCPHandler     *TCPHandler
-	ReadCancelled  *atomic.Bool // TODO: maybe these fields can be set when shutdown/closed are called so we know which API calls cannot be made
+	ReadCancelled  *atomic.Bool // these fields can be set when shutdown/closed are called so we know which API calls cannot be made
 	WriteCancelled *atomic.Bool
 }
 

@@ -34,7 +34,7 @@ func InitRoutingTable(localIFs map[uint32]*ip.LinkInterface) *ip.RoutingTable {
 	initialize a socket index table for the node
 */
 func (n *Node) InitSocketIndexTable() {
-	n.SocketIndexTable = make([]tcp.Socket, 0)
+	n.SocketIndexTable = make([]tcp.Socket, 0) // initial size of socket index table
 }
 
 /*

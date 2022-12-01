@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/netstack/tcpip/header"
@@ -30,7 +31,6 @@ type RetransmitSegment struct {
 
 // when we receive an ACK we need to remove it from the retransmission queue
 func (t *TCPHandler) removeFromRetransmissionQueue(tcbEntry *TCB, ackNum uint32) {
-	// TODO: do we have the invariant that the first element is the one that we want to remove?
 	// assume that TCB is locked, and will exit with it locked.
 	index_to_remove := -1
 	for i, retransmitHeader := range tcbEntry.RetransmissionQueue {
@@ -42,7 +42,6 @@ func (t *TCPHandler) removeFromRetransmissionQueue(tcbEntry *TCB, ackNum uint32)
 			break
 		}
 	}
-	// TODO: index_to_remove shouldn't be negative here
 	if index_to_remove > -1 {
 		// log.Printf("index to remove for retransmission queue: %d\n", index_to_remove)
 		tcbEntry.RetransmissionQueue = tcbEntry.RetransmissionQueue[index_to_remove+1:]
@@ -148,7 +147,6 @@ func (t *TCPHandler) fastRetransmit(tcbEntry *TCB, socketData *SocketData) {
 }
 
 // goroutine function to check timeout
-// TODO: where should we first call this routine?
 func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 	timeout := time.After(tcbEntry.RTO)
 	for {
@@ -179,7 +177,6 @@ func (t *TCPHandler) waitTimeout(tcbEntry *TCB, socketData *SocketData) {
 
 			// reached max retransmissions, go straight to close and perform cleanup
 			if tcbEntry.RetransmitCounter == MAX_RETRANSMISSIONS {
-				// TODO: go directly into CLOSED?
 				// what should be signaled in this case?
 				// log.Print("reached max retransmissions for data")
 				tcbEntry.State = CLOSED

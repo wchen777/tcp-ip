@@ -83,7 +83,7 @@ func (n *Node) REPL() {
 	// for table input
 	w := new(tabwriter.Writer)
 	// minwidth, tabwidth, padding, padchar, flags
-	w.Init(os.Stdout, 24, 10, 4, '\t', 0)
+	w.Init(os.Stdout, 24, 4, 2, '\t', 0)
 
 	fmt.Print("> ")
 	for scanner.Scan() {

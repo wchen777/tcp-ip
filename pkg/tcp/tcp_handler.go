@@ -39,7 +39,6 @@ const (
 )
 
 // The Send struct and Receive structs will be used to implement sliding window
-// TODO: need some pointer to indicate the next place where the application reads/writes to
 /*
 1         2          3          4
 ----------|----------|----------|----------
@@ -94,7 +93,7 @@ type TCB struct {
 	RetransmitCounter     int              // keeps track of the number of times the top element in the queue has been retransmitted
 	SegmentToTimestamp    map[uint32]int64 // maps updated NXT pointer (aka expected ACK for a given segment)
 	RTOTimeoutChan        chan bool
-	PendingReceivedFin    uint32
+	PendingReceivedFin    uint32 // store just the sequence number of the early FIN
 	PendingSendingFin     *atomic.Bool
 	PendingSendingFinCond sync.Cond
 	EarlyArrivalQueue     *EarlyArrivalQueue // for early arrivals, have an early arrival queue
@@ -221,12 +220,5 @@ func (t *TCPHandler) ReceivePacket(packet ip.IPPacket, data interface{}) {
 }
 
 func (t *TCPHandler) InitHandler(data []interface{}) {
-
-	//if len(data) != 3 { TODO: populate this when we know the length of the data args
-	//	log.Print("Incorrect length of data, returning from init handler")
-	//	return
-	//}
-
 	t.SocketTable = make(map[SocketData]*TCB)
-
 }

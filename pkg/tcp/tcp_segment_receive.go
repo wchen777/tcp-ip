@@ -11,7 +11,6 @@ import (
 	"go.uber.org/atomic"
 )
 
-// TODO: maybe we can have a map of sorts or something
 func (t *TCPHandler) HandleStateListen(tcpHeader header.TCP, localAddr uint32, srcPort uint16, destAddr uint32, destPort uint16, key *SocketData) {
 	// first check the SYN
 	if (tcpHeader.Flags() & header.TCPFlagAck) != 0 { // nothing should be ACK'd at this point
@@ -134,7 +133,6 @@ func (t *TCPHandler) HandleStateSynSent(tcpHeader header.TCP, tcbEntry *TCB, loc
 
 		return
 	}
-	// TODO: if the length of the payload is greater than 0, we need to do some processing?
 }
 
 func (t *TCPHandler) HandleStateSynReceived(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, payload []byte) {
@@ -177,7 +175,6 @@ func (t *TCPHandler) HandleStateSynReceived(tcpHeader header.TCP, tcbEntry *TCB,
 			go t.waitTimeout(tcbEntry, key) // start goroutine to wait for timeouts when packets are sent
 
 			// send to accept
-			// TODO: temporary solution is just adding an additional field to store the listener reference
 			listenerEntry := t.SocketTable[tcbEntry.ListenKey]
 			// signal the pending connections queue that there is another incoming connection
 			listenerEntry.PendingConnections = append(listenerEntry.PendingConnections, *key)
@@ -191,7 +188,7 @@ func (t *TCPHandler) HandleStateSynReceived(tcpHeader header.TCP, tcbEntry *TCB,
 }
 
 func (t *TCPHandler) HandleEstablished(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, tcpPayload []byte) {
-	// TODO: check if FIN flag is set --> if so, send back an ACK for the seq num+1 and go into passive close (CLOSE WAIT)
+	// check if FIN flag is set --> if so, send back an ACK for the seq num+1 and go into passive close (CLOSE WAIT)
 	if (tcpHeader.Flags() & header.TCPFlagFin) != 0 {
 		t.ReceiveFin(tcpHeader, key, tcbEntry) // FIN packet
 	} else {
@@ -201,7 +198,6 @@ func (t *TCPHandler) HandleEstablished(tcpHeader header.TCP, tcbEntry *TCB, key 
 
 func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, tcpPayload []byte) {
 	// want to receive an ACK in FIN WAIT 1
-	// TODO: need to handle simultaneous CLOSE, so if we receive a FIN, we need to ACK and change states
 	tcbEntry.TCBLock.Lock()
 
 	// log.Print("In FINWAIT 1")
@@ -226,7 +222,6 @@ func (t *TCPHandler) HandleFinWait1(tcpHeader header.TCP, tcbEntry *TCB, key *So
 	if (tcpHeader.Flags() & header.TCPFlagFin) != 0 { // if there is a fin... (packet is guaranteed to have ACK here)
 		if tcpHeader.AckNumber() == tcbEntry.SND.NXT-1 { // this checks that our FIN wasn't ACK'd
 			// check to make sure that the ACK is correct
-			// TODO: though this probably was already checked? so confusion
 			tcbEntry.State = CLOSING // the other side did not ACK our FIN, so we need to wait for it
 		} else {
 			tcbEntry.State = TIME_WAIT // the receiver ACK'd our FIN, go straight to TIME WAIT (no more data on either side)
@@ -281,8 +276,14 @@ func (t *TCPHandler) WaitForClosed(tcbEntry *TCB, key *SocketData) {
 func (t *TCPHandler) HandleFinWait2(tcpHeader header.TCP, tcbEntry *TCB, key *SocketData, tcpPayload []byte) {
 	if (tcpHeader.Flags() & header.TCPFlagFin) != 0 {
 		// TODO: what would the sequence number be here? Do we need to error check it?
-		// Receiving a FIN, send ACK back with incremented RCV.NXT
+		// Receiving a FIN, send ACK back with incremented RCV.NX
+
 		tcbEntry.TCBLock.Lock()
+
+		if tcpHeader.SequenceNumber() != tcbEntry.RCV.NXT {
+			tcbEntry.TCBLock.Unlock()
+			return
+		}
 
 		// change state to be TIME_WAIT
 		tcbEntry.State = TIME_WAIT

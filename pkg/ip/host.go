@@ -275,11 +275,10 @@ func (h *Host) ReadFromHandler() {
 		case data := <-h.TCPMessageChannel:
 			// when something is received from the TCP message channel
 			if len(data) == 0 {
-				// TODO: should we ever reach this case?
 				break
 			}
 
-			// TODO: make sure that the first four bytes will be the address
+			// make sure that the first four bytes will be the address
 			srcAddr := binary.BigEndian.Uint32(data[:ADDR_SIZE])
 			// log.Printf("source address received: %d\n", srcAddr)
 			destAddr := binary.BigEndian.Uint32(data[ADDR_SIZE : 2*ADDR_SIZE])

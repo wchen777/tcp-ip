@@ -25,14 +25,14 @@ func (n *Node) AcceptCommand(port uint16) error {
 }
 
 // helper function for accept to add a returned socket to the socket index table
-func (n *Node) AddToTable(socket tcp.Socket) int {
+func (n *Node) AddToTable(newSocket tcp.Socket) int {
 	for i, socket := range n.SocketIndexTable {
 		if socket == nil {
-			n.SocketIndexTable[i] = socket
+			n.SocketIndexTable[i] = newSocket
 			return i
 		}
 	}
-	n.SocketIndexTable = append(n.SocketIndexTable, socket)
+	n.SocketIndexTable = append(n.SocketIndexTable, newSocket)
 	return len(n.SocketIndexTable) - 1
 }
 
@@ -279,7 +279,6 @@ func (n *Node) SendFileTCPCommand(filepath string, ipAddr string, port uint16, c
 
 	// read file until EOF and send each amount that we read
 	// perhaps we can read like a chunk size each time? aka 1024 bytes
-	// TODO: is it okay to read chunk size?
 	bytesWritten := uint32(0)
 	for {
 		buf := make([]byte, 1024)
@@ -325,13 +324,13 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 			return
 		}
 
-		n.AddToTable(listener)
+		listenerIndex := n.AddToTable(listener)
 
 		// a new connection has been established, so we should
 		newConn, err := listener.VAccept()
 
 		// adding the new connection to the table
-		n.AddToTable(newConn)
+		connIndex := n.AddToTable(newConn)
 
 		fmt.Print("Connection established, reading now...")
 
@@ -345,6 +344,9 @@ func (n *Node) ReadFileTCPCommand(filepath string, port uint16) error {
 				newConn.VClose()
 				// close the listener connection as well
 				listener.VClose()
+				// remove it from teh node's socket table
+				n.SocketIndexTable[listenerIndex] = nil
+				n.SocketIndexTable[connIndex] = nil
 				f.Close()
 				fmt.Printf("Total bytes read: %d\n", bytesReadTotal)
 				return
