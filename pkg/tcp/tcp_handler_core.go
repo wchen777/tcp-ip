@@ -264,12 +264,16 @@ func (t *TCPHandler) Read(data []byte, amountToRead uint32, readAll bool, vc *VT
 			if !readAll && amountReadSoFar > 0 {
 				tcbEntry.TCBLock.Unlock()
 				return amountReadSoFar, nil // there's nothing to read, so we just return in the case of a non-blocking read
+			} else if tcbEntry.State == CLOSE_WAIT || tcbEntry.TimeoutCancelled.Load() { // if our socket is cancelled/closed and we re-enter read with no data to read
+				tcbEntry.TCBLock.Unlock()
+				return 0, io.EOF
 			} else {
 				// wait until we can get more data to read until amountToRead
 				for tcbEntry.RCV.LBR == tcbEntry.RCV.NXT {
 					//log.Print("Blocked because LBR is equal NXT")
 					tcbEntry.RCV.ReadBlockedCond.Wait()
-					//log.Print("Unblocked here")
+					log.Print("Unblocked here")
+					// check for no data + closed socket, if so, exit
 					if tcbEntry.RCV.LBR == tcbEntry.RCV.NXT && (tcbEntry.State == CLOSE_WAIT || tcbEntry.TimeoutCancelled.Load()) {
 						tcbEntry.TCBLock.Unlock()
 						return 0, io.EOF
@@ -643,6 +647,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 					tcbEntry.TCBLock.Unlock()
 					return
 				}
+				log.Print("waiting for data to be written 1")
 				tcbEntry.SND.SendBlockedCond.Wait() // wait until we get more data to send
 				if tcbEntry.Cancelled.Load() {      // also check after we are done waiting for close
 					tcbEntry.TCBLock.Unlock()
@@ -730,7 +735,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 				tcbEntry.TCBLock.Unlock()
 				return
 			}
-			// log.Print("waiting for more data to be written 2")
+			log.Print("waiting for more data to be written 2")
 			tcbEntry.SND.SendBlockedCond.Wait()
 			if tcbEntry.Cancelled.Load() {
 				tcbEntry.TCBLock.Unlock()
@@ -794,7 +799,7 @@ func (t *TCPHandler) Send(socketData *SocketData, tcbEntry *TCB) {
 		for tcbEntry.SND.NXT-tcbEntry.SND.UNA == Min(tcbEntry.SND.WND, tcbEntry.CWND) && tcbEntry.SND.WND != 0 {
 			// we've reached the maximum window size, this doesn't necessarily mean that the receive
 			// window is zero, it's just that we can't send any more data until earlier "entries" have been ACKed
-			// log.Print("blocked here")
+			log.Print("blocked here")
 			// log.Printf("window size: %d\n", tcbEntry.SND.WND)
 			if tcbEntry.Cancelled.Load() {
 				tcbEntry.TCBLock.Unlock()
