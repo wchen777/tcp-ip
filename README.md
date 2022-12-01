@@ -1,4 +1,8 @@
 # TCP 
+We decided to turn this in at 11:59 PM on Wednesday, 11/30. We made some additional bug fixes post deadline. 
+
+Bug fixes: 
+- Adding timeouts for FIN 
 
 ## API Design Choices
 ### What happens when a packet is received 
